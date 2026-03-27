@@ -16,7 +16,6 @@ from typing import Any
 from gmail_blade_mcp.client import strip_html, strip_quoted_reply
 from gmail_blade_mcp.models import DEFAULT_LIMIT, MAX_BODY_CHARS
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -26,7 +25,7 @@ def _get_header(message: dict[str, Any], name: str) -> str:
     """Extract a header value from a Gmail message dict."""
     for header in message.get("payload", {}).get("headers", []):
         if header.get("name", "").lower() == name.lower():
-            return header.get("value", "")
+            return str(header.get("value", ""))
     return ""
 
 
@@ -112,9 +111,7 @@ def _truncate_body(text: str, max_chars: int) -> str:
 # ---------------------------------------------------------------------------
 
 
-def format_message_list(
-    messages: list[dict[str, Any]], total: int | None = None, limit: int = DEFAULT_LIMIT
-) -> str:
+def format_message_list(messages: list[dict[str, Any]], total: int | None = None, limit: int = DEFAULT_LIMIT) -> str:
     """Format message list: date | sender | subject | size | labels.
 
     Example::
@@ -369,7 +366,7 @@ def format_label_list(labels: list[dict[str, Any]]) -> str:
         return "No labels found."
 
     lines: list[str] = []
-    for label in sorted(labels, key=lambda l: l.get("name", "")):
+    for label in sorted(labels, key=lambda lb: lb.get("name", "")):
         name = label.get("name", "?")
         total = label.get("messagesTotal")
         unread = label.get("messagesUnread")

@@ -73,3 +73,12 @@ warn_unused_ignores = true
 strict_equality = true
 show_error_codes = true
 pretty = true
+
+[[tool.mypy.overrides]]
+module = [
+    "googleapiclient.*",
+    "google_auth_oauthlib.*",
+    "google.auth.*",
+    "google.oauth2.*",
+]
+ignore_missing_imports = true

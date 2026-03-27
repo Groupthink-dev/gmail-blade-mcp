@@ -86,9 +86,7 @@ async def gmail_search(
     query: Annotated[str, Field(description="Gmail search query (same syntax as Gmail search bar)")] = "",
     label: Annotated[str, Field(description="Filter by label ID (e.g. INBOX, SENT, Label_123)")] = "",
     limit: Annotated[int, Field(description="Max messages to return (default 20, max 500)")] = DEFAULT_LIMIT,
-    include_details: Annotated[
-        bool, Field(description="Include full message details (5x token cost)")
-    ] = False,
+    include_details: Annotated[bool, Field(description="Include full message details (5x token cost)")] = False,
 ) -> str:
     """Search Gmail messages. Returns concise one-line-per-message format.
 
@@ -331,16 +329,14 @@ async def gmail_draft(
 async def gmail_flag(
     message_id: Annotated[str, Field(description="Message ID to modify")],
     add_labels: Annotated[str, Field(description="Label IDs to add, comma-separated (e.g. STARRED, IMPORTANT)")] = "",
-    remove_labels: Annotated[
-        str, Field(description="Label IDs to remove, comma-separated (e.g. UNREAD, INBOX)")
-    ] = "",
+    remove_labels: Annotated[str, Field(description="Label IDs to remove, comma-separated (e.g. UNREAD, INBOX)")] = "",
 ) -> str:
     """Add or remove labels on a message (star, mark read, etc.). Requires GMAIL_WRITE_ENABLED=true."""
     if err := require_write():
         return err
     try:
-        add = [l.strip() for l in add_labels.split(",") if l.strip()] if add_labels else None
-        remove = [l.strip() for l in remove_labels.split(",") if l.strip()] if remove_labels else None
+        add = [lbl.strip() for lbl in add_labels.split(",") if lbl.strip()] if add_labels else None
+        remove = [lbl.strip() for lbl in remove_labels.split(",") if lbl.strip()] if remove_labels else None
         if not add and not remove:
             return "Error: Provide at least one of add_labels or remove_labels."
         await _run(_get_client().modify_message, message_id, add_labels=add, remove_labels=remove)
@@ -419,8 +415,8 @@ async def gmail_bulk(
         case "trash":
             add = ["TRASH"]
         case "label":
-            add = [l.strip() for l in add_labels.split(",") if l.strip()] if add_labels else None
-            remove = [l.strip() for l in remove_labels.split(",") if l.strip()] if remove_labels else None
+            add = [lbl.strip() for lbl in add_labels.split(",") if lbl.strip()] if add_labels else None
+            remove = [lbl.strip() for lbl in remove_labels.split(",") if lbl.strip()] if remove_labels else None
             if not add and not remove:
                 return "Error: 'label' action requires add_labels or remove_labels."
         case _:
@@ -428,7 +424,7 @@ async def gmail_bulk(
 
     try:
         result = await _run(_get_client().batch_modify, ids, add_labels=add, remove_labels=remove)
-        return result
+        return str(result)
     except GmailError as e:
         return _error_response(e)
 
@@ -438,7 +434,7 @@ async def gmail_delete(
     message_id: Annotated[str, Field(description="Message ID to delete")],
     confirm: Annotated[
         bool,
-        Field(description="Must be true to confirm permanent deletion. Use gmail_move to TRASH instead for soft delete."),
+        Field(description="Must be true to confirm permanent deletion. Use gmail_move to TRASH for soft delete."),
     ] = False,
 ) -> str:
     """Permanently delete a message. CANNOT BE UNDONE. Requires GMAIL_WRITE_ENABLED=true and confirm=true.
@@ -485,9 +481,9 @@ async def gmail_filter_create(
 
     action: dict[str, Any] = {}
     if add_labels:
-        action["addLabelIds"] = [l.strip() for l in add_labels.split(",") if l.strip()]
+        action["addLabelIds"] = [lbl.strip() for lbl in add_labels.split(",") if lbl.strip()]
     if remove_labels:
-        action["removeLabelIds"] = [l.strip() for l in remove_labels.split(",") if l.strip()]
+        action["removeLabelIds"] = [lbl.strip() for lbl in remove_labels.split(",") if lbl.strip()]
     if forward_to:
         action["forward"] = forward_to
 
@@ -526,10 +522,21 @@ async def gmail_filter_delete(
 def main() -> None:
     """Run the MCP server."""
     if TRANSPORT == "http":
-        from gmail_blade_mcp.auth import BearerAuthMiddleware
+        from starlette.middleware import Middleware
 
-        mcp.settings.host = HTTP_HOST
-        mcp.settings.port = HTTP_PORT
-        mcp.run(transport="sse", middleware=[BearerAuthMiddleware])
+        from gmail_blade_mcp.auth import BearerAuthMiddleware, get_bearer_token
+
+        bearer = get_bearer_token()
+        logger.info("Starting HTTP transport on %s:%s", HTTP_HOST, HTTP_PORT)
+        if bearer:
+            logger.info("Bearer token auth enabled (GMAIL_MCP_API_TOKEN is set)")
+        else:
+            logger.info("Bearer token auth disabled (no GMAIL_MCP_API_TOKEN)")
+        mcp.run(
+            transport="http",
+            host=HTTP_HOST,
+            port=HTTP_PORT,
+            middleware=[Middleware(BearerAuthMiddleware)],
+        )
     else:
-        mcp.run(transport="stdio")
+        mcp.run()

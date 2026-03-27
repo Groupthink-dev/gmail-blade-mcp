@@ -3,14 +3,17 @@
 Wraps ``googleapiclient`` Gmail service with typed exceptions, pattern-based
 error classification, and convenience methods for each tool category. All
 methods are synchronous — the server wraps them with ``asyncio.to_thread()``.
+
+mypy: google-api-python-client is fully untyped. Service returns Any throughout.
 """
+
+# mypy: disable-error-code="no-any-return"
 
 from __future__ import annotations
 
 import base64
 import email.utils
 import logging
-import os
 import re
 import time
 from email.mime.text import MIMEText
@@ -145,6 +148,9 @@ def strip_html(html: str) -> str:
             if not self._skip:
                 self._out.write(data)
 
+        def get_data(self) -> str:
+            return self._out.getvalue()
+
     stripper = _Stripper()
     stripper.feed(html)
     text = stripper.get_data()
@@ -224,7 +230,7 @@ class GmailClient:
         self._user = "me"
 
         # Cache profile on init
-        profile = self._service.users().getProfile(userId=self._user).execute()  # type: ignore[union-attr]
+        profile = self._service.users().getProfile(userId=self._user).execute()
         self.email_address: str = profile.get("emailAddress", "")
         self.messages_total: int = profile.get("messagesTotal", 0)
         self.threads_total: int = profile.get("threadsTotal", 0)
@@ -256,7 +262,7 @@ class GmailClient:
         if label_ids:
             kwargs["labelIds"] = label_ids
 
-        result = self._execute(self._service.users().messages().list(**kwargs))  # type: ignore[union-attr]
+        result = self._execute(self._service.users().messages().list(**kwargs))
         messages_refs = result.get("messages", [])
         total = result.get("resultSizeEstimate", len(messages_refs))
 
@@ -286,7 +292,7 @@ class GmailClient:
         kwargs: dict[str, Any] = {"userId": self._user, "id": message_id, "format": fmt}
         if fmt == FORMAT_METADATA:
             kwargs["metadataHeaders"] = METADATA_HEADERS
-        return self._execute(self._service.users().messages().get(**kwargs))  # type: ignore[union-attr]
+        return self._execute(self._service.users().messages().get(**kwargs))
 
     def get_thread(self, thread_id: str, fmt: str = FORMAT_FULL) -> dict[str, Any]:
         """Get a thread with all its messages.
@@ -301,22 +307,20 @@ class GmailClient:
         kwargs: dict[str, Any] = {"userId": self._user, "id": thread_id, "format": fmt}
         if fmt == FORMAT_METADATA:
             kwargs["metadataHeaders"] = METADATA_HEADERS
-        return self._execute(self._service.users().threads().get(**kwargs))  # type: ignore[union-attr]
+        return self._execute(self._service.users().threads().get(**kwargs))
 
     # -- Labels --------------------------------------------------------------
 
     def list_labels(self) -> list[dict[str, Any]]:
         """List all labels (Gmail's equivalent of mailboxes/folders)."""
-        result = self._execute(self._service.users().labels().list(userId=self._user))  # type: ignore[union-attr]
+        result = self._execute(self._service.users().labels().list(userId=self._user))
         labels = result.get("labels", [])
 
         # Fetch details for each label (total/unread counts)
         detailed: list[dict[str, Any]] = []
         for label in labels:
             try:
-                detail = self._execute(
-                    self._service.users().labels().get(userId=self._user, id=label["id"])  # type: ignore[union-attr]
-                )
+                detail = self._execute(self._service.users().labels().get(userId=self._user, id=label["id"]))
                 detailed.append(detail)
             except GmailError:
                 detailed.append(label)
@@ -327,7 +331,7 @@ class GmailClient:
 
     def get_profile(self) -> dict[str, Any]:
         """Get account profile (email, message count, history ID)."""
-        return self._execute(self._service.users().getProfile(userId=self._user))  # type: ignore[union-attr]
+        return self._execute(self._service.users().getProfile(userId=self._user))
 
     def get_history(self, start_history_id: str, label_id: str | None = None) -> dict[str, Any]:
         """Get message history since a given history ID (incremental sync).
@@ -346,7 +350,7 @@ class GmailClient:
         if label_id:
             kwargs["labelId"] = label_id
 
-        return self._execute(self._service.users().history().list(**kwargs))  # type: ignore[union-attr]
+        return self._execute(self._service.users().history().list(**kwargs))
 
     # -- Send / Reply / Draft ------------------------------------------------
 
@@ -372,13 +376,9 @@ class GmailClient:
             message["bcc"] = bcc
 
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
-        return self._execute(
-            self._service.users().messages().send(userId=self._user, body={"raw": raw})  # type: ignore[union-attr]
-        )
+        return self._execute(self._service.users().messages().send(userId=self._user, body={"raw": raw}))
 
-    def reply_to_message(
-        self, message_id: str, body: str, reply_all: bool = False
-    ) -> dict[str, Any]:
+    def reply_to_message(self, message_id: str, body: str, reply_all: bool = False) -> dict[str, Any]:
         """Reply to an existing message.
 
         Args:
@@ -422,7 +422,9 @@ class GmailClient:
 
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
         return self._execute(
-            self._service.users().messages().send(  # type: ignore[union-attr]
+            self._service.users()
+            .messages()
+            .send(
                 userId=self._user,
                 body={"raw": raw, "threadId": original.get("threadId", "")},
             )
@@ -450,11 +452,7 @@ class GmailClient:
             message["bcc"] = bcc
 
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
-        return self._execute(
-            self._service.users().drafts().create(  # type: ignore[union-attr]
-                userId=self._user, body={"message": {"raw": raw}}
-            )
-        )
+        return self._execute(self._service.users().drafts().create(userId=self._user, body={"message": {"raw": raw}}))
 
     # -- Modify / Move / Delete ----------------------------------------------
 
@@ -480,9 +478,7 @@ class GmailClient:
         if remove_labels:
             body["removeLabelIds"] = remove_labels
 
-        return self._execute(
-            self._service.users().messages().modify(userId=self._user, id=message_id, body=body)  # type: ignore[union-attr]
-        )
+        return self._execute(self._service.users().messages().modify(userId=self._user, id=message_id, body=body))
 
     def batch_modify(
         self,
@@ -509,30 +505,22 @@ class GmailClient:
         if remove_labels:
             body["removeLabelIds"] = remove_labels
 
-        self._execute(
-            self._service.users().messages().batchModify(userId=self._user, body=body)  # type: ignore[union-attr]
-        )
+        self._execute(self._service.users().messages().batchModify(userId=self._user, body=body))
         return f"Modified {len(message_ids)} messages"
 
     def trash_message(self, message_id: str) -> dict[str, Any]:
         """Move a message to trash."""
-        return self._execute(
-            self._service.users().messages().trash(userId=self._user, id=message_id)  # type: ignore[union-attr]
-        )
+        return self._execute(self._service.users().messages().trash(userId=self._user, id=message_id))
 
     def delete_message(self, message_id: str) -> None:
         """Permanently delete a message. Cannot be undone."""
-        self._execute(
-            self._service.users().messages().delete(userId=self._user, id=message_id)  # type: ignore[union-attr]
-        )
+        self._execute(self._service.users().messages().delete(userId=self._user, id=message_id))
 
     # -- Filters -------------------------------------------------------------
 
     def list_filters(self) -> list[dict[str, Any]]:
         """List all Gmail filters."""
-        result = self._execute(
-            self._service.users().settings().filters().list(userId=self._user)  # type: ignore[union-attr]
-        )
+        result = self._execute(self._service.users().settings().filters().list(userId=self._user))
         return result.get("filter", [])
 
     def create_filter(self, criteria: dict[str, Any], action: dict[str, Any]) -> dict[str, Any]:
@@ -546,23 +534,17 @@ class GmailClient:
             Created filter dict.
         """
         body = {"criteria": criteria, "action": action}
-        return self._execute(
-            self._service.users().settings().filters().create(userId=self._user, body=body)  # type: ignore[union-attr]
-        )
+        return self._execute(self._service.users().settings().filters().create(userId=self._user, body=body))
 
     def delete_filter(self, filter_id: str) -> None:
         """Delete a Gmail filter."""
-        self._execute(
-            self._service.users().settings().filters().delete(userId=self._user, id=filter_id)  # type: ignore[union-attr]
-        )
+        self._execute(self._service.users().settings().filters().delete(userId=self._user, id=filter_id))
 
     # -- Identities (send-as) -----------------------------------------------
 
     def list_send_as(self) -> list[dict[str, Any]]:
         """List send-as aliases (identities)."""
-        result = self._execute(
-            self._service.users().settings().sendAs().list(userId=self._user)  # type: ignore[union-attr]
-        )
+        result = self._execute(self._service.users().settings().sendAs().list(userId=self._user))
         return result.get("sendAs", [])
 
     # -- Internal helpers ----------------------------------------------------

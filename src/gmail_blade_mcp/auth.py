@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import secrets
+from typing import Any
 
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -29,7 +30,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-def get_gmail_service(readonly: bool = True) -> object:
+def get_gmail_service(readonly: bool = True) -> Any:
     """Build and return an authenticated Gmail API service object.
 
     On first run, opens a browser for OAuth consent and saves the refresh token

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from gmail_blade_mcp.client import strip_html, strip_quoted_reply
 from gmail_blade_mcp.formatters import (
     _format_size,
@@ -11,9 +9,7 @@ from gmail_blade_mcp.formatters import (
     _truncate_body,
     format_label_list,
     format_message_list,
-    format_snippets,
 )
-
 
 # ---------------------------------------------------------------------------
 # HTML stripping
@@ -74,7 +70,9 @@ class TestStripHtml:
 
 class TestStripQuotedReply:
     def test_strips_on_wrote_pattern(self) -> None:
-        text = "Thanks for the update.\n\nOn Mon, Mar 27, 2026 at 10:00 AM Alice <alice@ex.com> wrote:\n> Original message"
+        text = (
+            "Thanks for the update.\n\nOn Mon, Mar 27, 2026 at 10:00 AM Alice <alice@ex.com> wrote:\n> Original message"
+        )
         result = strip_quoted_reply(text)
         assert "Thanks for the update" in result
         assert "Original message" not in result

@@ -3,28 +3,19 @@
 from __future__ import annotations
 
 import os
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gmail_blade_mcp.client import AuthError, GmailError, NotFoundError, RateLimitError
+from gmail_blade_mcp.client import AuthError, NotFoundError
 from gmail_blade_mcp.server import (
     gmail_bulk,
-    gmail_changes,
     gmail_delete,
     gmail_draft,
-    gmail_filters,
-    gmail_flag,
-    gmail_identities,
-    gmail_info,
-    gmail_mailboxes,
-    gmail_move,
     gmail_read,
     gmail_reply,
     gmail_search,
     gmail_send,
-    gmail_snippets,
-    gmail_state,
     gmail_thread,
 )
 

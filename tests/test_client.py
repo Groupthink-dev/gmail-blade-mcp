@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from gmail_blade_mcp.client import (
     AuthError,
     ConnectionError,
@@ -14,8 +12,6 @@ from gmail_blade_mcp.client import (
     RateLimitError,
     _classify_error,
     _scrub_credentials,
-    strip_html,
-    strip_quoted_reply,
 )
 
 
