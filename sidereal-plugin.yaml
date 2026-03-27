@@ -1,0 +1,43 @@
+name: gmail-blade-mcp
+version: "0.1.0"
+description: "Gmail email operations via Google API — search, read, send, threads, labels, drafts, filters"
+author: piersdd
+licence: MIT
+tier: certified
+homepage: https://github.com/piersdd/gmail-blade-mcp
+contract: email-v1
+
+services:
+  email:
+    search: gmail_search
+    read: gmail_read
+    mailboxes: gmail_mailboxes
+    snippets: gmail_snippets
+    threads: gmail_thread
+    state: gmail_state
+    changes: gmail_changes
+    bulk: gmail_bulk
+    send: gmail_send
+    reply: gmail_reply
+    flag: gmail_flag
+    move: gmail_move
+    delete: gmail_delete
+
+install:
+  runtime: uv
+  package: gmail-blade-mcp
+  command: gmail-blade-mcp
+
+env:
+  - name: GMAIL_WRITE_ENABLED
+    description: "Enable write operations (send, reply, flag, move, delete)"
+    default: "false"
+
+requires:
+  sidereal: ">=0.3.0"
+
+conformance:
+  required: "3/3"
+  recommended: "2/2"
+  optional: "3/3"
+  last_tested: "2026-03-27"
