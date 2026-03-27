@@ -10,6 +10,7 @@ Production Gmail MCP server for AI agents. Token-efficient, write-safe, thread-i
 | **Meta** | `gmail_info`, `gmail_state`, `gmail_changes`, `gmail_identities`, `gmail_filters` | Account info, incremental sync, send-as aliases, filter rules |
 | **Write** | `gmail_send`, `gmail_reply`, `gmail_draft`, `gmail_flag`, `gmail_move`, `gmail_bulk`, `gmail_delete` | Send, reply, draft, label, move, batch ops, delete |
 | **Filter** | `gmail_filter_create`, `gmail_filter_delete` | Create and delete Gmail filters |
+| **AI** | `gmail_classify`, `gmail_summarise` | Gemini-powered classification and summarisation (requires `GOOGLE_API_KEY`) |
 
 ### What makes this different
 
@@ -18,6 +19,7 @@ Production Gmail MCP server for AI agents. Token-efficient, write-safe, thread-i
 - **Thread-intelligent** — `thread_mode=deduped` strips quoted replies; `latest` shows only newest message
 - **Incremental sync** — `gmail_state` + `gmail_changes` via Gmail `history.list` API
 - **Rate-limit aware** — automatic exponential backoff on 429 errors
+- **Gemini AI** — classify and summarise emails using Google Gemini (optional, requires `GOOGLE_API_KEY`)
 - **Credential-safe** — OAuth tokens scrubbed from error messages
 
 ## Quick Start
@@ -72,6 +74,7 @@ A browser window opens for OAuth consent. After authorising, the refresh token i
 | `GMAIL_MCP_HOST` | `127.0.0.1` | HTTP host (when transport=http) |
 | `GMAIL_MCP_PORT` | `8768` | HTTP port (when transport=http) |
 | `GMAIL_MCP_API_TOKEN` | _(none)_ | Bearer token for HTTP transport auth |
+| `GOOGLE_API_KEY` | _(none)_ | Google AI Studio API key for Gemini classify/summarise tools |
 
 ## Security
 

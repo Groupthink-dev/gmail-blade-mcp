@@ -27,6 +27,7 @@ from gmail_blade_mcp.formatters import (
     format_snippets,
     format_thread,
 )
+from gmail_blade_mcp.gemini import get_gemini_client, require_gemini
 from gmail_blade_mcp.models import DEFAULT_LIMIT, MAX_BATCH_SIZE, MAX_BODY_CHARS, require_write
 
 logger = logging.getLogger(__name__)
@@ -512,6 +513,80 @@ async def gmail_filter_delete(
         return f"Filter {filter_id} deleted."
     except GmailError as e:
         return _error_response(e)
+
+
+# ===========================================================================
+# AI TOOLS (powered by Gemini — requires GOOGLE_API_KEY)
+# ===========================================================================
+
+
+@mcp.tool()
+async def gmail_classify(
+    message_id: Annotated[str, Field(description="Gmail message ID to classify")],
+    body_mode: Annotated[
+        str,
+        Field(description="Body format for classification: 'stripped' (default), 'snippet' (cheaper)"),
+    ] = "stripped",
+) -> str:
+    """Classify an email using Gemini. Returns category, priority, suggested action, and one-line summary.
+
+    Categories: personal, work, transactional, marketing, notification, social, finance, travel, support.
+    Requires GOOGLE_API_KEY.
+    """
+    if err := require_gemini():
+        return err
+    try:
+        message = await _run(_get_client().get_message, message_id)
+        email_text = format_message_body(message, body_mode=body_mode, max_body_chars=2000)
+        result = await _run(get_gemini_client().classify, email_text)
+
+        if "error" in result:
+            return f"Classification failed: {result.get('raw', result.get('error'))}"
+
+        lines = [
+            f"Category: {result.get('category', '?')}",
+            f"Priority: {result.get('priority', '?')}",
+            f"Action: {result.get('action', '?')}",
+            f"Summary: {result.get('summary', '?')}",
+        ]
+        return "\n".join(lines)
+    except GmailError as e:
+        return _error_response(e)
+    except Exception as e:
+        return f"Error: Gemini classification failed: {e}"
+
+
+@mcp.tool()
+async def gmail_summarise(
+    message_id: Annotated[str, Field(description="Message ID (single email) — mutually exclusive with thread_id")] = "",
+    thread_id: Annotated[str, Field(description="Thread ID (full thread) — mutually exclusive with message_id")] = "",
+) -> str:
+    """Summarise an email or thread using Gemini. Returns concise summary with action items.
+
+    Provide either message_id (single email) or thread_id (full thread), not both.
+    Requires GOOGLE_API_KEY.
+    """
+    if err := require_gemini():
+        return err
+    if not message_id and not thread_id:
+        return "Error: Provide either message_id or thread_id."
+    if message_id and thread_id:
+        return "Error: Provide message_id or thread_id, not both."
+
+    try:
+        if message_id:
+            message = await _run(_get_client().get_message, message_id)
+            email_text = format_message_body(message, body_mode="stripped", max_body_chars=4000)
+        else:
+            thread = await _run(_get_client().get_thread, thread_id)
+            email_text = format_thread(thread, thread_mode="deduped", max_body_chars=2000)
+
+        summary: str = await _run(get_gemini_client().summarise, email_text)
+        return summary
+    except GmailError as e:
+        return _error_response(e)
+    except Exception as e:
+        return f"Error: Gemini summarisation failed: {e}"
 
 
 # ===========================================================================

@@ -1,6 +1,6 @@
 [project]
 name = "gmail-blade-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "Gmail MCP Server — search, read, send, threads, labels, drafts, filters"
 readme = "README.md"
 license = {text = "MIT"}
@@ -20,6 +20,7 @@ dependencies = [
     "google-api-python-client>=2.160.0",
     "google-auth-httplib2>=0.2.0",
     "google-auth-oauthlib>=1.2.0",
+    "google-genai>=1.0.0",
     "pydantic>=2.0.0",
 ]
 
@@ -80,5 +81,6 @@ module = [
     "google_auth_oauthlib.*",
     "google.auth.*",
     "google.oauth2.*",
+    "google.genai.*",
 ]
 ignore_missing_imports = true

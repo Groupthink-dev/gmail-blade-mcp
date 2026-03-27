@@ -36,10 +36,11 @@ src/gmail_blade_mcp/
 ├── client.py         — GmailClient wrapping google-api-python-client (typed exceptions, lazy singleton)
 ├── formatters.py     — Token-efficient output formatters (HTML stripping, quote dedup, body truncation)
 ├── models.py         — Constants (limits, scopes, body modes) + write-gate function
+├── gemini.py         — Gemini-powered classification + summarisation (google-genai SDK)
 └── auth.py           — Gmail OAuth 2.0 + MCP HTTP bearer auth
 ```
 
-- `server.py` defines MCP tools and delegates to `client.py` methods
+- `server.py` defines MCP tools and delegates to `client.py` and `gemini.py` methods
 - `client.py` wraps Google's Gmail API service with `asyncio.to_thread()` for async
 - All tools return strings (MCP convention) — formatters handle presentation
 - Errors are caught and returned as `Error: ...` strings, not raised
@@ -88,4 +89,5 @@ make run           # Start the MCP server (stdio transport)
 - Thread modes: `deduped` (default), `latest`, `full`
 - Rate limit: automatic exponential backoff on 429 errors (3 retries)
 - Credential scrubbing: OAuth tokens redacted from error messages
-- 19 tools across 5 categories: read, meta, write, filter, identity
+- Gemini AI: classification + summarisation via `google-genai` SDK, gated behind `GOOGLE_API_KEY`
+- 21 tools across 6 categories: read, meta, write, filter, identity, AI

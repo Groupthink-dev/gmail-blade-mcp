@@ -47,9 +47,29 @@ gmail_bulk(message_ids="id1,id2,id3", action="archive")
 gmail_send(to="alice@example.com", subject="Meeting tomorrow", body="Hi Alice, ...")
 ```
 
+## AI-Powered Tools (requires GOOGLE_API_KEY)
+
+### 8. Classify an email
+```
+gmail_classify(message_id="abc123")
+→ Category: work | Priority: high | Action: reply_needed | Summary: ...
+```
+
+### 9. Summarise an email or thread
+```
+gmail_summarise(message_id="abc123")
+gmail_summarise(thread_id="xyz789")
+```
+
 ## Workflow Examples
 
-### Email triage
+### AI-assisted triage
+1. `gmail_snippets(label="INBOX", limit=30)` — scan inbox
+2. `gmail_classify(message_id="...")` — classify ambiguous emails
+3. `gmail_bulk(message_ids="...", action="archive")` — archive low-priority
+4. `gmail_summarise(thread_id="...")` — summarise long threads before responding
+
+### Email triage (no AI)
 1. `gmail_snippets(label="INBOX", limit=30)` — scan inbox
 2. `gmail_read(message_id="...")` — read important ones
 3. `gmail_bulk(message_ids="...", action="archive")` — archive processed

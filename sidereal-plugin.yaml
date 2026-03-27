@@ -1,5 +1,5 @@
 name: gmail-blade-mcp
-version: "0.1.0"
+version: "0.2.0"
 description: "Gmail email operations via Google API — search, read, send, threads, labels, drafts, filters"
 author: piersdd
 licence: MIT
@@ -32,9 +32,17 @@ env:
   - name: GMAIL_WRITE_ENABLED
     description: "Enable write operations (send, reply, flag, move, delete)"
     default: "false"
+  - name: GOOGLE_API_KEY
+    description: "Google AI Studio API key for Gemini classify/summarise tools"
+    secret: true
 
 requires:
   sidereal: ">=0.3.0"
+
+inference:
+  provider: google-gemini
+  model: gemini-3.1-flash-lite
+  purpose: "classification, summarisation"
 
 conformance:
   required: "3/3"
