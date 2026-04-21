@@ -1,5 +1,5 @@
 name: gmail-blade-mcp
-version: "0.2.0"
+version: "0.2.1"
 description: "Gmail email operations via Google API — search, read, send, threads, labels, drafts, filters"
 author: piersdd
 licence: MIT

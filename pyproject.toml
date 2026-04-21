@@ -1,6 +1,6 @@
 [project]
 name = "gmail-blade-mcp"
-version = "0.2.0"
+version = "0.2.1"
 description = "Gmail MCP Server — search, read, send, threads, labels, drafts, filters"
 readme = "README.md"
 license = {text = "MIT"}
