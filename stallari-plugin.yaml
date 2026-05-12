@@ -39,6 +39,8 @@ env:
 requires:
   sidereal: ">=0.3.0"
 
+  adapter_contracts:
+    - "email >= 1.0"
 inference:
   provider: google-gemini
   model: gemini-3.1-flash-lite
