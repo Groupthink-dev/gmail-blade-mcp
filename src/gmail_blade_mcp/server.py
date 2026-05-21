@@ -8,14 +8,16 @@ quoted-reply deduplication.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
+import time
 from typing import Annotated, Any
 
 from fastmcp import FastMCP
 from pydantic import Field
 
-from gmail_blade_mcp.client import GmailClient, GmailError
+from gmail_blade_mcp.client import GmailClient, GmailError, InvalidRequestError
 from gmail_blade_mcp.formatters import (
     format_changes,
     format_filter_list,
@@ -31,6 +33,209 @@ from gmail_blade_mcp.gemini import get_gemini_client, require_gemini
 from gmail_blade_mcp.models import DEFAULT_LIMIT, MAX_BATCH_SIZE, MAX_BODY_CHARS, require_write
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# DD-338 Phase A.1 — Scope-tag wrapper + Track 3 _meta envelope
+# ---------------------------------------------------------------------------
+
+# [[DD-278]] scope vocabulary → Gmail q= clause defaults.
+# Each entry: (env-var name, default q= fragment). public is a no-op pass-through.
+_SCOPE_ENV_DEFAULTS: dict[str, tuple[str | None, str | None]] = {
+    "work": ("GMAIL_WORK_LABEL", "category:work"),
+    "personal": ("GMAIL_PERSONAL_LABEL", "category:personal"),
+    "family": ("GMAIL_FAMILY_LABEL", "label:Family"),
+    "public": (None, None),  # explicit no-op — DD-278 public means "no scope restriction"
+}
+
+_VALID_SCOPES: frozenset[str | None] = frozenset({"work", "personal", "family", "public", None})
+
+
+def _resolve_scope_expr(scope: str) -> str | None:
+    """Resolve a scope value to its Gmail q= fragment via env-var override or default.
+
+    Returns None when the scope is a no-op (e.g. ``public``).
+    """
+    env_var, default = _SCOPE_ENV_DEFAULTS[scope]
+    if env_var is None:
+        return None
+    # Empty-string env var also collapses to default — defends against unset/empty drift
+    return os.environ.get(env_var) or default
+
+
+def _compose_scoped_query(query: str, scope: str | None) -> tuple[str, list[str]]:
+    """Compose user query + DD-278 scope tag into effective Gmail q= clause.
+
+    Args:
+        query: User-supplied Gmail search query (verbatim ``q=`` syntax).
+        scope: DD-278 scope tag — one of ``work``/``personal``/``family``/``public``
+            or ``None``. ``None`` and ``public`` are no-ops (return query unchanged
+            and an empty filters_applied list).
+
+    Returns:
+        ``(effective_query, filters_applied)`` where ``filters_applied`` is the
+        ordered list of scope tags applied (for the ``_meta.filtered_by`` envelope).
+
+    Raises:
+        InvalidRequestError: When ``scope`` is not in the DD-278 vocabulary.
+    """
+    if scope not in _VALID_SCOPES:
+        raise InvalidRequestError(f"Unknown scope {scope!r}. Valid: work, personal, family, public, None.")
+
+    if scope is None:
+        # Backwards-compatible no-op: user query passes through verbatim
+        return query, []
+
+    scope_expr = _resolve_scope_expr(scope)
+    if scope_expr is None:
+        # public — DD-278 "no scope restriction"; pass through unchanged
+        # but record the scope tag so the envelope shows the dispatcher's intent
+        return query, [f"scope={scope}"]
+
+    filters_applied = [f"scope={scope}"]
+    if query:
+        # Wrap both clauses in parens to defend against operator-precedence surprises
+        effective = f"({query}) ({scope_expr})"
+    else:
+        effective = f"({scope_expr})"
+    return effective, filters_applied
+
+
+def _format_meta_envelope(
+    matched_total: int,
+    returned: int,
+    filtered_by: list[str],
+    latency_ms: int,
+    redactions: list[str] | None = None,
+    next_cursor: str | None = None,
+    error_notes: list[str] | None = None,
+) -> str:
+    r"""Build the DD-338 Track 3 ``_meta`` envelope line.
+
+    Wire shape (architect amendment 2026-05-21 — JSON tail block):
+
+        _meta: {"matched_total": 42, "returned": 10, ...}
+
+    Single JSON line. Callers prepend ``\n\n`` when appending to an existing
+    payload (assembler regex ``\n\n_meta: (\{.*\})$``).
+    """
+    meta: dict[str, Any] = {
+        "matched_total": matched_total,
+        "returned": returned,
+        "filtered_by": filtered_by,
+        "latency_ms": latency_ms,
+    }
+    if redactions:
+        meta["redactions"] = redactions
+    if next_cursor is not None:
+        meta["next_cursor"] = next_cursor
+    if error_notes:
+        meta["error_notes"] = error_notes
+    return "_meta: " + json.dumps(meta, separators=(", ", ": "))
+
+
+def _append_meta(payload: str, meta_line: str) -> str:
+    """Append a ``_meta`` envelope line to a tool payload using the canonical separator."""
+    return f"{payload}\n\n{meta_line}"
+
+
+# Gmail label-ID cache for env-var label-name resolution.
+# Maps logical scope tag → resolved Gmail label ID (e.g. ``family`` → ``Label_99``).
+# Populated lazily on first scope-verify call against a label-based scope.
+_LABEL_ID_CACHE: dict[str, str | None] = {}
+
+
+def _scope_label_name(scope: str) -> str | None:
+    """Extract the Gmail label name from a scope's resolved expression, if any.
+
+    For ``label:Family`` returns ``Family``; for ``category:work`` returns None
+    (category operators map to system label IDs, not user labels).
+    """
+    expr = _resolve_scope_expr(scope)
+    if expr is None:
+        return None
+    if expr.startswith("label:"):
+        return expr[len("label:") :]
+    return None
+
+
+def _scope_category_id(scope: str) -> str | None:
+    """Map a ``category:X`` scope expression to its Gmail system label ID.
+
+    Gmail's category labels are documented constants:
+    https://developers.google.com/gmail/api/guides/labels
+    """
+    expr = _resolve_scope_expr(scope)
+    if expr is None or not expr.startswith("category:"):
+        return None
+    category = expr[len("category:") :].lower()
+    # Gmail system label IDs are uppercased CATEGORY_<NAME>
+    return f"CATEGORY_{category.upper()}"
+
+
+def _resolve_label_id(label_name: str, client: GmailClient) -> str | None:
+    """Look up a Gmail label ID by its human-readable name.
+
+    Caches results for the process lifetime. Returns None if the label does not exist.
+    """
+    if label_name in _LABEL_ID_CACHE:
+        return _LABEL_ID_CACHE[label_name]
+    try:
+        labels = client.list_labels()
+    except GmailError:
+        return None
+    found: str | None = None
+    for label in labels:
+        if label.get("name") == label_name:
+            found = label.get("id")
+            break
+    _LABEL_ID_CACHE[label_name] = found
+    return found
+
+
+def _message_label_ids(message: dict[str, Any]) -> list[str]:
+    """Extract the ``labelIds`` array from a Gmail message dict (defensive empty default)."""
+    ids = message.get("labelIds", [])
+    return list(ids) if isinstance(ids, list) else []
+
+
+def _thread_label_ids(thread: dict[str, Any]) -> list[str]:
+    """Aggregate labelIds across all messages in a thread (union)."""
+    seen: set[str] = set()
+    for msg in thread.get("messages", []):
+        for lid in _message_label_ids(msg):
+            seen.add(lid)
+    return sorted(seen)
+
+
+def _scope_matches(scope: str, label_ids: list[str], client: GmailClient) -> bool:
+    """Post-fetch scope verification — check if a record's labelIds satisfy the scope.
+
+    For ``label:Foo`` scopes: requires the resolved label ID to be present.
+    For ``category:work`` scopes: best-effort — checks the CATEGORY_<NAME> label ID
+        is present. Gmail's auto-categorisation may not always set the explicit
+        system label, so this is documented as best-effort in the spec.
+    For ``public`` / no-op scopes: always matches (no restriction).
+
+    Returns True when the scope was a no-op (None / public) or when the record's
+    labelIds include the expected label.
+    """
+    if scope == "public":
+        return True
+    # Try label-name resolution first
+    label_name = _scope_label_name(scope)
+    if label_name is not None:
+        resolved = _resolve_label_id(label_name, client)
+        if resolved is None:
+            return False
+        return resolved in label_ids
+    # Fall through to category-ID match
+    category_id = _scope_category_id(scope)
+    if category_id is not None:
+        return category_id in label_ids
+    # Unknown shape (env-var override could be anything) — accept the record
+    # rather than burn the work item. Documented best-effort in spec §3.3.
+    return True
 
 
 # ---------------------------------------------------------------------------
@@ -86,23 +291,60 @@ async def _run(fn: Any, *args: Any, **kwargs: Any) -> Any:
 async def gmail_search(
     query: Annotated[str, Field(description="Gmail search query (same syntax as Gmail search bar)")] = "",
     label: Annotated[str, Field(description="Filter by label ID (e.g. INBOX, SENT, Label_123)")] = "",
+    scope: Annotated[
+        str | None,
+        Field(
+            description=(
+                "DD-278 scope tag: 'work', 'personal', 'family', 'public', or None (default unscoped). "
+                "Maps to Gmail category:/label: clause via GMAIL_{WORK,PERSONAL,FAMILY}_LABEL env vars. "
+                "Defaults: category:work / category:personal / label:Family. "
+                "public is a no-op pass-through (no scope restriction). Server-side filter (DD-278 scope-tag wrapper)."
+            )
+        ),
+    ] = None,
     limit: Annotated[int, Field(description="Max messages to return (default 20, max 500)")] = DEFAULT_LIMIT,
     include_details: Annotated[bool, Field(description="Include full message details (5x token cost)")] = False,
+    include_meta: Annotated[
+        bool,
+        Field(
+            description=(
+                "Append structured _meta envelope (matched_total, returned, filtered_by, latency_ms) — "
+                "DD-338 Track 3. Default False (backwards-compatible)."
+            )
+        ),
+    ] = False,
 ) -> str:
     """Search Gmail messages. Returns concise one-line-per-message format.
 
-    Uses Gmail search syntax: ``from:alice subject:meeting after:2026/03/01``
+    Uses Gmail search syntax: ``from:alice subject:meeting after:2026/03/01``.
+    Layers DD-278 scope-tag wrapper via ``scope=`` argument — see argument docstring.
     """
+    start = time.monotonic()
     try:
+        effective_query, filters_applied = _compose_scoped_query(query, scope)
+        if label:
+            filters_applied.append(f"label={label}")
+        if limit != DEFAULT_LIMIT:
+            filters_applied.append(f"limit={limit}")
         label_ids = [label] if label else None
         messages, total = await _run(
             _get_client().search_messages,
-            query=query,
+            query=effective_query,
             label_ids=label_ids,
             limit=limit,
             include_details=include_details,
         )
-        return format_message_list(messages, total=total, limit=limit)
+        payload = format_message_list(messages, total=total, limit=limit)
+        if not include_meta:
+            return payload
+        latency_ms = int((time.monotonic() - start) * 1000)
+        meta = _format_meta_envelope(
+            matched_total=total,
+            returned=len(messages),
+            filtered_by=filters_applied,
+            latency_ms=latency_ms,
+        )
+        return _append_meta(payload, meta)
     except GmailError as e:
         return _error_response(e)
 
@@ -117,6 +359,21 @@ async def gmail_read(
     max_body_chars: Annotated[
         int, Field(description="Max body characters for stripped mode (default 4000)")
     ] = MAX_BODY_CHARS,
+    scope: Annotated[
+        str | None,
+        Field(
+            description=(
+                "DD-278 scope tag: 'work', 'personal', 'family', 'public', or None. "
+                "When set, the message is fetched then verified against the scope's labelIds; "
+                "on mismatch returns empty payload + _meta.redactions=['scope_mismatch']. "
+                "Server-side filter (DD-278 scope-tag wrapper) — post-fetch label verification."
+            )
+        ),
+    ] = None,
+    include_meta: Annotated[
+        bool,
+        Field(description="Append structured _meta envelope — DD-338 Track 3. Default False."),
+    ] = False,
 ) -> str:
     """Read a single email message with headers and body.
 
@@ -125,10 +382,46 @@ async def gmail_read(
     - ``full``: Complete body text (may be very large)
     - ``snippet``: First ~200 chars only
     - ``none``: Headers and metadata only
+
+    Supports DD-278 scope-tag wrapper via ``scope=`` argument. Post-fetch
+    verification — bytes are pulled before scope-verify; documented residual
+    threat per DD-338 spec §10.
     """
+    start = time.monotonic()
     try:
-        message = await _run(_get_client().get_message, message_id)
-        return format_message_body(message, body_mode=body_mode, max_body_chars=max_body_chars)
+        # Validate scope early to surface InvalidRequestError before any API call
+        if scope is not None and scope not in _VALID_SCOPES:
+            raise InvalidRequestError(f"Unknown scope {scope!r}. Valid: work, personal, family, public, None.")
+        client = _get_client()
+        message = await _run(client.get_message, message_id)
+        filters_applied: list[str] = []
+        redactions: list[str] = []
+        scope_mismatch = False
+        if scope is not None:
+            filters_applied.append(f"scope={scope}")
+            label_ids = _message_label_ids(message)
+            if not _scope_matches(scope, label_ids, client):
+                scope_mismatch = True
+                redactions.append("scope_mismatch")
+        if scope_mismatch:
+            payload = "(no messages matched scope filter)"
+            matched_total = 0
+            returned = 0
+        else:
+            payload = format_message_body(message, body_mode=body_mode, max_body_chars=max_body_chars)
+            matched_total = 1
+            returned = 1
+        if not include_meta:
+            return payload
+        latency_ms = int((time.monotonic() - start) * 1000)
+        meta = _format_meta_envelope(
+            matched_total=matched_total,
+            returned=returned,
+            filtered_by=filters_applied,
+            latency_ms=latency_ms,
+            redactions=redactions or None,
+        )
+        return _append_meta(payload, meta)
     except GmailError as e:
         return _error_response(e)
 
@@ -137,22 +430,53 @@ async def gmail_read(
 async def gmail_snippets(
     query: Annotated[str, Field(description="Gmail search query")] = "",
     label: Annotated[str, Field(description="Filter by label ID")] = "",
+    scope: Annotated[
+        str | None,
+        Field(
+            description=(
+                "DD-278 scope tag: 'work', 'personal', 'family', 'public', or None (default unscoped). "
+                "Maps to Gmail category:/label: clause via GMAIL_{WORK,PERSONAL,FAMILY}_LABEL env vars. "
+                "Server-side filter (DD-278 scope-tag wrapper)."
+            )
+        ),
+    ] = None,
     limit: Annotated[int, Field(description="Max messages (default 20)")] = DEFAULT_LIMIT,
+    include_meta: Annotated[
+        bool,
+        Field(description="Append structured _meta envelope — DD-338 Track 3. Default False."),
+    ] = False,
 ) -> str:
     """Token-efficient message previews. One line per message with date, sender, subject, and snippet.
 
     Lower token cost than ``gmail_search`` — use this for scanning/triage.
+    Supports DD-278 scope-tag wrapper via ``scope=`` argument.
     """
+    start = time.monotonic()
     try:
+        effective_query, filters_applied = _compose_scoped_query(query, scope)
+        if label:
+            filters_applied.append(f"label={label}")
+        if limit != DEFAULT_LIMIT:
+            filters_applied.append(f"limit={limit}")
         label_ids = [label] if label else None
         messages, total = await _run(
             _get_client().search_messages,
-            query=query,
+            query=effective_query,
             label_ids=label_ids,
             limit=limit,
             include_details=False,
         )
-        return format_snippets(messages, total=total, limit=limit)
+        payload = format_snippets(messages, total=total, limit=limit)
+        if not include_meta:
+            return payload
+        latency_ms = int((time.monotonic() - start) * 1000)
+        meta = _format_meta_envelope(
+            matched_total=total,
+            returned=len(messages),
+            filtered_by=filters_applied,
+            latency_ms=latency_ms,
+        )
+        return _append_meta(payload, meta)
     except GmailError as e:
         return _error_response(e)
 
@@ -172,6 +496,21 @@ async def gmail_thread(
     max_body_chars: Annotated[
         int, Field(description="Max body characters per message (default 4000)")
     ] = MAX_BODY_CHARS,
+    scope: Annotated[
+        str | None,
+        Field(
+            description=(
+                "DD-278 scope tag: 'work', 'personal', 'family', 'public', or None. "
+                "When set, the thread is fetched then verified against aggregated labelIds; "
+                "on mismatch returns empty payload + _meta.redactions=['scope_mismatch']. "
+                "Server-side filter (DD-278 scope-tag wrapper) — post-fetch label verification."
+            )
+        ),
+    ] = None,
+    include_meta: Annotated[
+        bool,
+        Field(description="Append structured _meta envelope — DD-338 Track 3. Default False."),
+    ] = False,
 ) -> str:
     """Read a full email thread with all messages.
 
@@ -179,10 +518,45 @@ async def gmail_thread(
     - ``deduped``: Strips quoted reply content (``On ... wrote:`` blocks) — recommended
     - ``latest``: Only the most recent message in the thread
     - ``full``: All messages with complete content (high token cost for long threads)
+
+    Supports DD-278 scope-tag wrapper via ``scope=`` argument. Post-fetch
+    verification across the union of message labelIds in the thread —
+    bytes are pulled before scope-verify per DD-338 spec §10 residual threat.
     """
+    start = time.monotonic()
     try:
-        thread = await _run(_get_client().get_thread, thread_id)
-        return format_thread(thread, thread_mode=thread_mode, max_body_chars=max_body_chars)
+        if scope is not None and scope not in _VALID_SCOPES:
+            raise InvalidRequestError(f"Unknown scope {scope!r}. Valid: work, personal, family, public, None.")
+        client = _get_client()
+        thread = await _run(client.get_thread, thread_id)
+        filters_applied: list[str] = []
+        redactions: list[str] = []
+        scope_mismatch = False
+        if scope is not None:
+            filters_applied.append(f"scope={scope}")
+            label_ids = _thread_label_ids(thread)
+            if not _scope_matches(scope, label_ids, client):
+                scope_mismatch = True
+                redactions.append("scope_mismatch")
+        if scope_mismatch:
+            payload = "(no messages matched scope filter)"
+            matched_total = 0
+            returned = 0
+        else:
+            payload = format_thread(thread, thread_mode=thread_mode, max_body_chars=max_body_chars)
+            matched_total = 1
+            returned = 1
+        if not include_meta:
+            return payload
+        latency_ms = int((time.monotonic() - start) * 1000)
+        meta = _format_meta_envelope(
+            matched_total=matched_total,
+            returned=returned,
+            filtered_by=filters_applied,
+            latency_ms=latency_ms,
+            redactions=redactions or None,
+        )
+        return _append_meta(payload, meta)
     except GmailError as e:
         return _error_response(e)
 
