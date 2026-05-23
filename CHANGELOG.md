@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.6.0 — 2026-05-23
+
+### Changed
+
+- **DD-338 Phase B.1.b — stable sort-before-return on 5 multi-record read tools.**
+  - `gmail_search` + `gmail_snippets`: now sort by `internalDate` desc, `id` asc
+    tie-break before formatter — provides byte-identical output across paginations
+    and cache thrash.
+  - `gmail_mailboxes`: `format_label_list` now sorts by case-folded `name` asc with
+    `id` asc tie-break (formerly raw `name` only). Users with mixed-case labels
+    (e.g. `Family` + `family-archive`) will see a deterministic re-order; consumers
+    that tolerated unstable ordering pre-B.1.b are unaffected by content but see
+    tightened ordering. Land without deprecation cycle per DD-338 spec architect
+    lock #5.
+  - `gmail_identities`: sort by case-folded `sendAsEmail` asc before formatter.
+  - `gmail_filters`: sort by `id` asc before formatter.
+- **Catalog declaration**: `granularity.deterministic_ordering` flips
+  `unstable → stable` on all 5 tools in `stallari-plugins` catalog entry.
+- **Tool descriptions** updated to document the chosen sort key per tool.
+
+### Added
+
+- **16 new pytest cases** in `tests/test_b1b_determinism.py` — N=5 byte-identical
+  determinism harness per tool + sort-key invariance + empty-input + id-tiebreak
+  test for `format_label_list`.
+
 ## 0.5.0 — 2026-05-23
 
 ### Added

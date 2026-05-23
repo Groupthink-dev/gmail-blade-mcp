@@ -366,7 +366,11 @@ def format_label_list(labels: list[dict[str, Any]]) -> str:
         return "No labels found."
 
     lines: list[str] = []
-    for label in sorted(labels, key=lambda lb: lb.get("name", "")):
+    # DD-338 Phase B.1.b — stable sort: name asc (case-folded), id asc tie-break.
+    for label in sorted(
+        labels,
+        key=lambda lb: ((lb.get("name", "") or "").casefold(), lb.get("id", "") or ""),
+    ):
         name = label.get("name", "?")
         total = label.get("messagesTotal")
         unread = label.get("messagesUnread")
