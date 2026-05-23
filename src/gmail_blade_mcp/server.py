@@ -775,8 +775,47 @@ async def gmail_changes(
     """
     try:
         label_id = label if label else None
+        t0 = time.perf_counter()
         history = await _run(_get_client().get_history, history_id, label_id=label_id)
-        return format_changes(history)
+        latency_ms = int((time.perf_counter() - t0) * 1000)
+        payload = format_changes(history)
+
+        # DD-338 Phase C — Track 3 _meta envelope (OQ-3 Option C semantics).
+        # matched_total = returned = aggregate delta count across
+        # messagesAdded/messagesDeleted/labelsAdded/labelsRemoved arrays of
+        # every History record; redactions carries ``more_changes_available``
+        # when Gmail History API signals additional pages via ``nextPageToken``.
+        records = history.get("history", []) or []
+        aggregate = 0
+        for record in records:
+            aggregate += len(record.get("messagesAdded", []) or [])
+            aggregate += len(record.get("messagesDeleted", []) or [])
+            aggregate += len(record.get("labelsAdded", []) or [])
+            aggregate += len(record.get("labelsRemoved", []) or [])
+
+        # Truncate history_id to 12 chars for token economy + privacy.
+        history_short = (history_id or "")[:12]
+        filtered_by = [f"history_id={history_short}"]
+        if label_id:
+            filtered_by.append(f"label={label_id}")
+
+        redactions: list[str] = []
+        if history.get("nextPageToken"):
+            redactions.append("more_changes_available")
+
+        # Surface new watermark (historyId) as next_cursor for forward sync.
+        new_history_id = history.get("historyId")
+        next_cursor = str(new_history_id) if new_history_id else None
+
+        meta = _format_meta_envelope(
+            matched_total=aggregate,
+            returned=aggregate,
+            filtered_by=sorted(filtered_by),
+            latency_ms=latency_ms,
+            redactions=redactions or None,
+            next_cursor=next_cursor,
+        )
+        return _append_meta(payload, meta)
     except GmailError as e:
         return _error_response(e)
 
