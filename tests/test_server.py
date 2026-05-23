@@ -192,8 +192,8 @@ class TestGmailChangesMetaEnvelope:
         # No label arg -> key absent
         keys = {f.split("=")[0] for f in meta["filtered_by"]}
         assert "label" not in keys
-        # nextPageToken absent -> no redactions key
-        assert "redactions" not in meta
+        # nextPageToken absent -> empty redactions list (canonical lib emits required key)
+        assert meta["redactions"] == []
         # next_cursor surfaces the new watermark
         assert meta["next_cursor"] == "9876543210"
         assert isinstance(meta["latency_ms"], int)

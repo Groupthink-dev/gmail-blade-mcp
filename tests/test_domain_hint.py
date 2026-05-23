@@ -14,8 +14,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-
-from gmail_blade_mcp.domain_hint import (
+from stallari_mcp_helpers import (
     Pattern,
     compute_domain_hint,
     load_patterns_from_yaml,
@@ -46,11 +45,6 @@ def _make_message(
     }
 
 
-def _identity_projector(rec: dict[str, Any], field: str) -> Any:
-    """Trivial projector: pulls the field by key directly."""
-    return rec.get(field)
-
-
 # ---------------------------------------------------------------------------
 # compute_domain_hint — pure engine
 # ---------------------------------------------------------------------------
@@ -59,12 +53,12 @@ def _identity_projector(rec: dict[str, Any], field: str) -> Any:
 class TestComputeDomainHint:
     def test_empty_patterns_returns_none(self) -> None:
         rec = {"from": "alice@family.com"}
-        assert compute_domain_hint(rec, [], _identity_projector) is None
+        assert compute_domain_hint(rec, []) is None
 
     def test_single_contains_match(self) -> None:
         rec = {"from": "alice@family.com"}
         patterns = [Pattern(field="from", op="contains", value="@family.com", domain="family")]
-        assert compute_domain_hint(rec, patterns, _identity_projector) == "family"
+        assert compute_domain_hint(rec, patterns) == "family"
 
     def test_first_match_wins(self) -> None:
         rec = {"from": "alice@family.com"}
@@ -72,17 +66,17 @@ class TestComputeDomainHint:
             Pattern(field="from", op="contains", value="@family.com", domain="family"),
             Pattern(field="from", op="contains", value="alice", domain="contacts"),
         ]
-        assert compute_domain_hint(rec, patterns, _identity_projector) == "family"
+        assert compute_domain_hint(rec, patterns) == "family"
 
     def test_glob_wildcard_matches(self) -> None:
         rec = {"from": "alice@acme.corp"}
         patterns = [Pattern(field="from", op="glob", value="*@acme.*", domain="work")]
-        assert compute_domain_hint(rec, patterns, _identity_projector) == "work"
+        assert compute_domain_hint(rec, patterns) == "work"
 
     def test_field_absent_no_match(self) -> None:
         rec = {"subject": "hi"}
         patterns = [Pattern(field="from", op="contains", value="@anywhere", domain="any")]
-        assert compute_domain_hint(rec, patterns, _identity_projector) is None
+        assert compute_domain_hint(rec, patterns) is None
 
     def test_equals_op_exact_match(self) -> None:
         rec = {"label": "Label_42"}
@@ -90,12 +84,12 @@ class TestComputeDomainHint:
             Pattern(field="label", op="equals", value="Label_99", domain="family"),
             Pattern(field="label", op="equals", value="Label_42", domain="work"),
         ]
-        assert compute_domain_hint(rec, patterns, _identity_projector) == "work"
+        assert compute_domain_hint(rec, patterns) == "work"
 
     def test_list_field_element_match(self) -> None:
         rec = {"labelIds": ["INBOX", "Label_99", "CATEGORY_PERSONAL"]}
         patterns = [Pattern(field="labelIds", op="equals", value="Label_99", domain="family")]
-        assert compute_domain_hint(rec, patterns, _identity_projector) == "family"
+        assert compute_domain_hint(rec, patterns) == "family"
 
     def test_unknown_op_silently_skipped(self) -> None:
         rec = {"from": "alice@family.com"}
@@ -103,12 +97,12 @@ class TestComputeDomainHint:
             Pattern(field="from", op="regex", value=".*", domain="any"),  # unsupported op
             Pattern(field="from", op="contains", value="@family.com", domain="family"),
         ]
-        assert compute_domain_hint(rec, patterns, _identity_projector) == "family"
+        assert compute_domain_hint(rec, patterns) == "family"
 
     def test_unknown_op_no_fallback_match_returns_none(self) -> None:
         rec = {"from": "alice@family.com"}
         patterns = [Pattern(field="from", op="regex", value=".*", domain="any")]
-        assert compute_domain_hint(rec, patterns, _identity_projector) is None
+        assert compute_domain_hint(rec, patterns) is None
 
 
 # ---------------------------------------------------------------------------
