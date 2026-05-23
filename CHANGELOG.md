@@ -1,5 +1,51 @@
 # Changelog
 
+## 0.5.0 — 2026-05-23
+
+### Added
+
+- **DD-338 A.2.dom.c per-record `domain_hints` substrate.** Read tools
+  (`gmail_search`, `gmail_snippets`, `gmail_read`, `gmail_thread`) now emit a
+  `domain_hints: {message_id: domain}` entry in the `_meta` envelope when
+  user-defined patterns match. Pattern engine in
+  `src/gmail_blade_mcp/domain_hint.py` (`Pattern` dataclass +
+  `compute_domain_hint` first-match-wins + `load_patterns_from_yaml`).
+- **`_load_blade_config` BladeConfigStore reader** (Convention #23 reader-side
+  compliance): reads `<state-root>/blade-config/gmail-blade-mcp/config.yaml`
+  via `STALLARI_STATE_ROOT` override or `~/Library/Application
+  Support/Stallari/` default. Blade-id sanitiser (`.lower().replace("/", "_")`)
+  in lockstep with the Swift writer.
+- **Gmail field projector** mapping logical pattern fields (`from`, `to`,
+  `cc`, `subject`, `labelIds`, `id`, `threadId`) onto the Gmail Messages API
+  record shape — case-insensitive header lookup with single/multi-header
+  collapse.
+- **`stallari-plugin.yaml`**: new `blade_domain_hint_patterns:` block at
+  pack root, shipping empty `patterns: []` by default. Users define
+  patterns via the in-app DomainConsentView (stallari-harness v0.99.29.0).
+- **32 new pytest cases** in `tests/test_domain_hint.py` covering the pure
+  engine, the YAML loader, the Gmail field projector, the BladeConfigStore
+  reader, and end-to-end emission via `gmail_search`.
+
+### Changed
+
+- `_format_meta_envelope` accepts a new `domain_hints: dict[str, str] | None
+  = None` kwarg; emits the `domain_hints` key only when non-empty
+  (Convention #22 graceful degradation).
+- New dependency: `pyyaml>=6.0` for blade-config parsing.
+
+### Notes
+
+- Backwards-compatible: existing tools without populated patterns emit
+  byte-identical output to v0.4.0 (`domain_hints` key absent). All 99
+  pre-existing tests pass unchanged; 131/131 total green.
+- Missing / malformed `config.yaml` ⇒ blade runs with empty pattern list
+  ⇒ no `domain_hints` emitted. Never crashes (Convention #22).
+- No phone-home (Convention #19): config reload is a local file read at
+  module import only.
+- `gmail_thread` keys hints by each contained message ID (sub-records)
+  rather than the thread ID — most useful for the dispatcher when a
+  thread spans domains.
+
 ## 0.4.0 — 2026-05-21
 
 ### Added

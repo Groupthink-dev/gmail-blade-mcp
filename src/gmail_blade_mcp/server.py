@@ -18,6 +18,7 @@ from fastmcp import FastMCP
 from pydantic import Field
 
 from gmail_blade_mcp.client import GmailClient, GmailError, InvalidRequestError
+from gmail_blade_mcp.domain_hint import Pattern, compute_domain_hint, load_patterns_from_yaml
 from gmail_blade_mcp.formatters import (
     format_changes,
     format_filter_list,
@@ -109,6 +110,7 @@ def _format_meta_envelope(
     redactions: list[str] | None = None,
     next_cursor: str | None = None,
     error_notes: list[str] | None = None,
+    domain_hints: dict[str, str] | None = None,
 ) -> str:
     r"""Build the DD-338 Track 3 ``_meta`` envelope line.
 
@@ -118,6 +120,10 @@ def _format_meta_envelope(
 
     Single JSON line. Callers prepend ``\n\n`` when appending to an existing
     payload (assembler regex ``\n\n_meta: (\{.*\})$``).
+
+    DD-338 A.2.dom.c — when ``domain_hints`` is non-empty, an additional
+    ``domain_hints: {record_id: domain}`` entry is emitted. Empty / None ⇒
+    key omitted entirely (Convention #22 graceful degradation).
     """
     meta: dict[str, Any] = {
         "matched_total": matched_total,
@@ -131,6 +137,8 @@ def _format_meta_envelope(
         meta["next_cursor"] = next_cursor
     if error_notes:
         meta["error_notes"] = error_notes
+    if domain_hints:
+        meta["domain_hints"] = domain_hints
     return "_meta: " + json.dumps(meta, separators=(", ", ": "))
 
 
@@ -239,6 +247,134 @@ def _scope_matches(scope: str, label_ids: list[str], client: GmailClient) -> boo
 
 
 # ---------------------------------------------------------------------------
+# DD-338 A.2.dom.c — BladeConfigStore reader + Gmail field projector
+# ---------------------------------------------------------------------------
+
+_BLADE_ID = "gmail-blade-mcp"
+
+
+def _state_root() -> str:
+    """Resolve Stallari state root.
+
+    Honours ``STALLARI_STATE_ROOT`` env var (used in tests + non-standard
+    deployments); falls back to the macOS Application Support default per
+    Convention #27 / StallariPaths.
+    """
+    override = os.environ.get("STALLARI_STATE_ROOT")
+    if override:
+        return override
+    return os.path.expanduser("~/Library/Application Support/Stallari")
+
+
+def _sanitize_blade_id(blade_id: str) -> str:
+    """Mirror the Swift writer's blade-id directory naming.
+
+    Lower-case + ``/`` ⇒ ``_`` — kept in lockstep with BladeConfigStore.swift
+    (Convention #23: reader and writer agree on the on-disk shape).
+    """
+    return blade_id.lower().replace("/", "_")
+
+
+def _load_blade_config(blade_id: str) -> list[Pattern]:
+    """Read this blade's domain_hint patterns from the BladeConfigStore.
+
+    Convention #22 graceful degradation: missing / unreadable / malformed
+    config returns ``[]`` — the blade still runs, simply without per-record
+    ``domain_hints`` emission.
+
+    Convention #23 reader-side compliance: resolves via state-root +
+    ``blade-config/<sanitized-blade>/config.yaml`` in lockstep with the
+    Swift writer's path layout.
+    """
+    config_path = os.path.join(
+        _state_root(),
+        "blade-config",
+        _sanitize_blade_id(blade_id),
+        "config.yaml",
+    )
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            yaml_str = f.read()
+    except OSError:
+        return []
+    return load_patterns_from_yaml(yaml_str)
+
+
+# Cached at module load; re-launch the blade to pick up config edits at v1.
+_PATTERNS: list[Pattern] = _load_blade_config(_BLADE_ID)
+
+
+def _gmail_field_projector(record: dict[str, Any], field: str) -> Any:
+    """Project a Gmail message record onto a logical ``Pattern.field`` name.
+
+    Gmail Messages API record shape::
+
+        {
+          "id": "...",
+          "threadId": "...",
+          "labelIds": [...],
+          "payload": {"headers": [{"name": "From", "value": "..."}, ...]}
+        }
+
+    Supported field names: ``from``, ``to``, ``cc``, ``subject`` (extracted
+    from ``payload.headers[*]`` by case-insensitive header-name match),
+    ``labelIds`` (list returned directly), ``id`` and ``threadId`` (scalar
+    string). Unknown field ⇒ ``None`` (no match).
+    """
+    if not isinstance(record, dict):
+        return None
+    f = field.lower()
+    if f == "id":
+        return record.get("id")
+    if f == "threadid":
+        return record.get("threadId")
+    if f == "labelids":
+        v = record.get("labelIds")
+        return v if isinstance(v, list) else None
+    if f in {"from", "to", "cc", "subject"}:
+        payload = record.get("payload")
+        if not isinstance(payload, dict):
+            return None
+        headers = payload.get("headers")
+        if not isinstance(headers, list):
+            return None
+        target = f
+        values: list[str] = []
+        for h in headers:
+            if not isinstance(h, dict):
+                continue
+            name = h.get("name")
+            if isinstance(name, str) and name.lower() == target:
+                val = h.get("value")
+                if isinstance(val, str):
+                    values.append(val)
+        if not values:
+            return None
+        # Single header common-case ⇒ scalar; multi-header (rare) ⇒ list
+        return values[0] if len(values) == 1 else values
+    return None
+
+
+def _compute_domain_hints_for_records(records: list[dict[str, Any]]) -> dict[str, str]:
+    """Apply ``_PATTERNS`` to each record; return ``{record_id: domain}`` map.
+
+    Records lacking a domain match are omitted. Empty pattern list ⇒ empty
+    dict ⇒ caller suppresses the ``domain_hints`` envelope key.
+    """
+    if not _PATTERNS:
+        return {}
+    out: dict[str, str] = {}
+    for rec in records:
+        rec_id = rec.get("id") if isinstance(rec, dict) else None
+        if not isinstance(rec_id, str):
+            continue
+        hint = compute_domain_hint(rec, _PATTERNS, _gmail_field_projector)
+        if hint is not None:
+            out[rec_id] = hint
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Transport configuration
 # ---------------------------------------------------------------------------
 
@@ -338,11 +474,13 @@ async def gmail_search(
         if not include_meta:
             return payload
         latency_ms = int((time.monotonic() - start) * 1000)
+        domain_hints = _compute_domain_hints_for_records(messages)
         meta = _format_meta_envelope(
             matched_total=total,
             returned=len(messages),
             filtered_by=filters_applied,
             latency_ms=latency_ms,
+            domain_hints=domain_hints or None,
         )
         return _append_meta(payload, meta)
     except GmailError as e:
@@ -414,12 +552,16 @@ async def gmail_read(
         if not include_meta:
             return payload
         latency_ms = int((time.monotonic() - start) * 1000)
+        domain_hints: dict[str, str] = {}
+        if not scope_mismatch:
+            domain_hints = _compute_domain_hints_for_records([message])
         meta = _format_meta_envelope(
             matched_total=matched_total,
             returned=returned,
             filtered_by=filters_applied,
             latency_ms=latency_ms,
             redactions=redactions or None,
+            domain_hints=domain_hints or None,
         )
         return _append_meta(payload, meta)
     except GmailError as e:
@@ -470,11 +612,13 @@ async def gmail_snippets(
         if not include_meta:
             return payload
         latency_ms = int((time.monotonic() - start) * 1000)
+        domain_hints = _compute_domain_hints_for_records(messages)
         meta = _format_meta_envelope(
             matched_total=total,
             returned=len(messages),
             filtered_by=filters_applied,
             latency_ms=latency_ms,
+            domain_hints=domain_hints or None,
         )
         return _append_meta(payload, meta)
     except GmailError as e:
@@ -549,12 +693,18 @@ async def gmail_thread(
         if not include_meta:
             return payload
         latency_ms = int((time.monotonic() - start) * 1000)
+        domain_hints: dict[str, str] = {}
+        if not scope_mismatch:
+            thread_messages = thread.get("messages", []) if isinstance(thread, dict) else []
+            if isinstance(thread_messages, list):
+                domain_hints = _compute_domain_hints_for_records(thread_messages)
         meta = _format_meta_envelope(
             matched_total=matched_total,
             returned=returned,
             filtered_by=filters_applied,
             latency_ms=latency_ms,
             redactions=redactions or None,
+            domain_hints=domain_hints or None,
         )
         return _append_meta(payload, meta)
     except GmailError as e:
