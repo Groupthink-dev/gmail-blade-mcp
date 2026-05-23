@@ -470,6 +470,11 @@ async def gmail_search(
             limit=limit,
             include_details=include_details,
         )
+        # DD-338 Phase B.1.b — stable sort: internalDate desc, id asc tie-break.
+        messages = sorted(
+            messages,
+            key=lambda m: (-int(m.get("internalDate", "0") or "0"), m.get("id", "")),
+        )
         payload = format_message_list(messages, total=total, limit=limit)
         if not include_meta:
             return payload
@@ -607,6 +612,11 @@ async def gmail_snippets(
             label_ids=label_ids,
             limit=limit,
             include_details=False,
+        )
+        # DD-338 Phase B.1.b — stable sort: internalDate desc, id asc tie-break.
+        messages = sorted(
+            messages,
+            key=lambda m: (-int(m.get("internalDate", "0") or "0"), m.get("id", "")),
         )
         payload = format_snippets(messages, total=total, limit=limit)
         if not include_meta:
@@ -776,6 +786,11 @@ async def gmail_identities() -> str:
     """List send-as aliases (email identities) configured on this account."""
     try:
         identities = await _run(_get_client().list_send_as)
+        # DD-338 Phase B.1.b — stable sort: sendAsEmail asc (case-folded).
+        identities = sorted(
+            identities,
+            key=lambda i: (i.get("sendAsEmail", "") or "").casefold(),
+        )
         return format_send_as_list(identities)
     except GmailError as e:
         return _error_response(e)
@@ -786,6 +801,8 @@ async def gmail_filters() -> str:
     """List all Gmail filters with criteria and actions."""
     try:
         filters = await _run(_get_client().list_filters)
+        # DD-338 Phase B.1.b — stable sort: id asc.
+        filters = sorted(filters, key=lambda f: f.get("id", "") or "")
         return format_filter_list(filters)
     except GmailError as e:
         return _error_response(e)
