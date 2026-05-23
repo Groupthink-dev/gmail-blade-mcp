@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.8.0] - 2026-05-24
+
+### Changed
+
+- DD-338 Phase E.python: depend on `stallari-mcp-helpers>=0.1.0,<1.0.0`; deleted
+  local `src/gmail_blade_mcp/domain_hint.py` + local `_format_meta_envelope` /
+  `_append_meta` helpers from `server.py`. Pure substrate swap — no behavioural
+  change. Wire-shape:
+  - `_meta.filtered_by` now alphabetically sorted (canonical lib invariant).
+  - JSON separators tightened to `(",", ":")` (canonical compact form).
+  - `_meta.redactions` (empty list) and `_meta.next_cursor` (null) now always
+    emitted as required keys (canonical lib always-required shape).
+- `_compute_domain_hints_for_records` now pre-flattens Gmail message records
+  via `_gmail_field_projector` into a flat dict before calling the canonical
+  `compute_domain_hint` (which dropped the projector-callable parameter). The
+  per-blade `_gmail_field_projector` is retained — it encodes Gmail's nested
+  `payload.headers[*]` shape and remains blade-local logic.
+
 ## 0.6.0 — 2026-05-23
 
 ### Changed

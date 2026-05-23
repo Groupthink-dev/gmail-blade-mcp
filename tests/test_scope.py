@@ -14,11 +14,11 @@ import re
 from unittest.mock import MagicMock, patch
 
 import pytest
+from stallari_mcp_helpers import meta_envelope
 
 from gmail_blade_mcp.client import InvalidRequestError
 from gmail_blade_mcp.server import (
     _compose_scoped_query,
-    _format_meta_envelope,
     gmail_read,
     gmail_search,
     gmail_snippets,
@@ -144,25 +144,28 @@ class TestComposeScopedQuery:
 
 
 # ---------------------------------------------------------------------------
-# _format_meta_envelope helper
+# meta_envelope helper (canonical from stallari_mcp_helpers)
 # ---------------------------------------------------------------------------
 
 
 class TestFormatMetaEnvelope:
     def test_required_fields(self) -> None:
-        line = _format_meta_envelope(matched_total=42, returned=10, filtered_by=["scope=work"], latency_ms=234)
+        line = meta_envelope(matched_total=42, returned=10, filtered_by=["scope=work"], latency_ms=234)
         assert line.startswith("_meta: {")
         data = json.loads(line[len("_meta: ") :])
         assert data["matched_total"] == 42
         assert data["returned"] == 10
         assert data["filtered_by"] == ["scope=work"]
         assert data["latency_ms"] == 234
-        assert "redactions" not in data  # absent when empty
-        assert "next_cursor" not in data
+        # Canonical lib always emits redactions/next_cursor as required keys
+        # (empty list / null when not supplied); error_notes/domain_hints
+        # remain optional and are omitted when empty.
+        assert data["redactions"] == []
+        assert data["next_cursor"] is None
         assert "error_notes" not in data
 
     def test_optional_redactions(self) -> None:
-        line = _format_meta_envelope(
+        line = meta_envelope(
             matched_total=0,
             returned=0,
             filtered_by=["scope=work"],
@@ -226,8 +229,8 @@ class TestGmailSearchScope:
         meta = _parse_meta(result)
         assert meta["matched_total"] == 137
         assert meta["returned"] == 2
-        # scope first, then label
-        assert meta["filtered_by"] == ["scope=work", "label=INBOX"]
+        # canonical meta_envelope sorts filtered_by alphabetically
+        assert meta["filtered_by"] == ["label=INBOX", "scope=work"]
         assert isinstance(meta["latency_ms"], int)
         assert meta["latency_ms"] >= 0
 
@@ -311,7 +314,7 @@ class TestGmailReadScope:
         meta = _parse_meta(result)
         assert meta["matched_total"] == 1
         assert meta["returned"] == 1
-        assert "redactions" not in meta
+        assert meta["redactions"] == []
         assert "alice@example.com" in result
 
     async def test_read_scope_mismatch_redacts(self, mock_client: MagicMock) -> None:
@@ -333,7 +336,7 @@ class TestGmailReadScope:
         with patch.dict(os.environ, {"GMAIL_FAMILY_LABEL": "label:Family"}):
             result = await gmail_read(message_id="msg1", scope="family", include_meta=True)
         meta = _parse_meta(result)
-        assert "redactions" not in meta
+        assert meta["redactions"] == []
         assert meta["matched_total"] == 1
 
     async def test_read_scope_invalid(self, mock_client: MagicMock) -> None:
@@ -359,7 +362,7 @@ class TestGmailThreadScope:
         with patch.dict(os.environ, {}, clear=True):
             result = await gmail_thread(thread_id="t1", scope="work", include_meta=True)
         meta = _parse_meta(result)
-        assert "redactions" not in meta
+        assert meta["redactions"] == []
         assert meta["matched_total"] == 1
 
     async def test_thread_scope_mismatch_redacts(self, mock_client: MagicMock) -> None:
@@ -377,11 +380,11 @@ class TestGmailThreadScope:
         with patch.dict(os.environ, {"GMAIL_FAMILY_LABEL": "label:Family"}):
             result = await gmail_thread(thread_id="t1", scope="family", include_meta=True)
         meta = _parse_meta(result)
-        assert "redactions" not in meta
+        assert meta["redactions"] == []
 
     async def test_thread_scope_public_passthrough(self, mock_client: MagicMock) -> None:
         mock_client.get_thread.return_value = _make_thread("t1", [["INBOX"]])
         result = await gmail_thread(thread_id="t1", scope="public", include_meta=True)
         meta = _parse_meta(result)
-        assert "redactions" not in meta
+        assert meta["redactions"] == []
         assert meta["filtered_by"] == ["scope=public"]
