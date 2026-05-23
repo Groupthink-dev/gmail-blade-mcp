@@ -156,3 +156,99 @@ class TestBulk:
         with patch.dict(os.environ, {"GMAIL_WRITE_ENABLED": "true"}):
             result = await gmail_bulk(message_ids="", action="archive")
             assert "Error" in result
+
+
+# ===========================================================================
+# DD-338 Phase C Wave 3 — gmail_changes _meta envelope
+# ===========================================================================
+
+
+class TestGmailChangesMetaEnvelope:
+    """`gmail_changes` audit_surface promotion from minimal -> structured."""
+
+    async def test_emits_canonical_envelope_clean(self, mock_client: MagicMock) -> None:
+        import json
+
+        from gmail_blade_mcp.server import gmail_changes
+
+        mock_client.get_history.return_value = {
+            "historyId": "9876543210",
+            "history": [
+                {"messagesAdded": [{"message": {"id": "m1"}}]},
+                {"messagesDeleted": [{"message": {"id": "m2"}}]},
+                {"labelsAdded": [{"message": {"id": "m3"}}]},
+            ],
+        }
+        result = await gmail_changes(history_id="1234567890abcdef")
+        assert "\n\n_meta: " in result
+        _, _, tail = result.rpartition("\n\n")
+        meta = json.loads(tail[len("_meta: ") :])
+
+        # Option C: matched_total = returned = aggregate delta count
+        assert meta["matched_total"] == 3
+        assert meta["returned"] == 3
+        # history_id truncated to 12 chars
+        assert "history_id=1234567890ab" in meta["filtered_by"]
+        # No label arg -> key absent
+        keys = {f.split("=")[0] for f in meta["filtered_by"]}
+        assert "label" not in keys
+        # nextPageToken absent -> no redactions key
+        assert "redactions" not in meta
+        # next_cursor surfaces the new watermark
+        assert meta["next_cursor"] == "9876543210"
+        assert isinstance(meta["latency_ms"], int)
+        assert meta["latency_ms"] >= 0
+
+    async def test_more_changes_available_redaction(self, mock_client: MagicMock) -> None:
+        import json
+
+        from gmail_blade_mcp.server import gmail_changes
+
+        mock_client.get_history.return_value = {
+            "historyId": "1000",
+            "nextPageToken": "page-2-token",
+            "history": [{"messagesAdded": [{"message": {"id": "m1"}}]}],
+        }
+        result = await gmail_changes(history_id="abc", label="Label_5")
+        _, _, tail = result.rpartition("\n\n")
+        meta = json.loads(tail[len("_meta: ") :])
+        assert meta["redactions"] == ["more_changes_available"]
+        # label key present and value matches resolved label_id
+        assert "label=Label_5" in meta["filtered_by"]
+        # Sorted alphabetically
+        assert meta["filtered_by"] == sorted(meta["filtered_by"])
+        assert meta["matched_total"] == 1
+
+    async def test_error_path_no_envelope(self, mock_client: MagicMock) -> None:
+        from gmail_blade_mcp.client import GmailError
+        from gmail_blade_mcp.server import gmail_changes
+
+        mock_client.get_history.side_effect = GmailError("Invalid history ID")
+        result = await gmail_changes(history_id="bad-id")
+        assert "Error" in result
+        assert "\n\n_meta: " not in result
+
+    async def test_n3_deterministic_after_latency_strip(self, mock_client: MagicMock) -> None:
+        import json
+
+        from gmail_blade_mcp.server import gmail_changes
+
+        history_fixture = {
+            "historyId": "9876543210",
+            "nextPageToken": "page-2",
+            "history": [
+                {"messagesAdded": [{"message": {"id": "m1"}}, {"message": {"id": "m2"}}]},
+                {"labelsRemoved": [{"message": {"id": "m3"}}]},
+            ],
+        }
+        mock_client.get_history.return_value = history_fixture
+
+        stripped: list[tuple[str, dict]] = []
+        for _ in range(3):
+            result = await gmail_changes(history_id="hid-abc-def-ghi", label="L1")
+            payload, _, tail = result.rpartition("\n\n")
+            meta = json.loads(tail[len("_meta: ") :])
+            meta.pop("latency_ms", None)
+            stripped.append((payload, meta))
+
+        assert all(s == stripped[0] for s in stripped[1:])
