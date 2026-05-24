@@ -569,7 +569,7 @@ requires-dist = [
     { name = "google-genai", specifier = ">=1.0.0" },
     { name = "pydantic", specifier = ">=2.0.0" },
     { name = "pyyaml", specifier = ">=6.0" },
-    { name = "stallari-mcp-helpers", specifier = ">=0.1.0,<1.0.0" },
+    { name = "stallari-mcp-helpers", specifier = ">=0.1.1,<1.0.0" },
 ]
 
 [package.metadata.requires-dev]
@@ -1757,14 +1757,14 @@ wheels = [
 
 [[package]]
 name = "stallari-mcp-helpers"
-version = "0.1.0"
+version = "0.1.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "pyyaml" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/f4/c6/0fc259a84c5d7bde39c0bcfdaf17198a37a02125f5b76465796b375ca8db/stallari_mcp_helpers-0.1.0.tar.gz", hash = "sha256:1d6f587a38279c9eaef1975cd9ad1984e98e9b820ae8ac75c9321fd85dd15c89", size = 53315, upload-time = "2026-05-23T23:17:14.605Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/20/9e/5278b5587ac6f2c19a3323fc3a075c81e0bc14d406701cfdfba3a9cd7369/stallari_mcp_helpers-0.1.1.tar.gz", hash = "sha256:cae3bc9197c1b474d61a0f40cff3be736ec3170bd589e4f908772dd1adff4541", size = 53663, upload-time = "2026-05-23T23:55:32.424Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/4f/e3/0e5bbbec5958b51a698f971cef7b8df7f18651579f01cd89b9dcbc96412f/stallari_mcp_helpers-0.1.0-py3-none-any.whl", hash = "sha256:a82d3615c338db4498b19c784599a3c5ff966046b25823f9b9fbdf9a802c66b9", size = 9581, upload-time = "2026-05-23T23:17:13.294Z" },
+    { url = "https://files.pythonhosted.org/packages/33/7b/e3c6e60a7b8573a8159cf54476783e5c93049bdd2c5e60f4f932b87f1f76/stallari_mcp_helpers-0.1.1-py3-none-any.whl", hash = "sha256:fcd13c5b453c1685ec9ffa176a4ddde8f30d1f30ad8cce7acafaa94badf1ce73", size = 9765, upload-time = "2026-05-23T23:55:30.789Z" },
 ]
 
 [[package]]

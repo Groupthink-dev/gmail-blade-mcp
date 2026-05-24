@@ -11,7 +11,7 @@ import asyncio
 import logging
 import os
 import time
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
 from fastmcp import FastMCP
 from pydantic import Field
@@ -257,7 +257,7 @@ def _load_blade_config(blade_id: str) -> list[Pattern]:
             yaml_str = f.read()
     except OSError:
         return []
-    return cast(list[Pattern], load_patterns_from_yaml(yaml_str))
+    return load_patterns_from_yaml(yaml_str)
 
 
 # Cached at module load; re-launch the blade to pick up config edits at v1.
@@ -464,7 +464,7 @@ async def gmail_search(
             latency_ms=latency_ms,
             domain_hints=domain_hints or None,
         )
-        return cast(str, append_meta(payload, meta))
+        return append_meta(payload, meta)
     except GmailError as e:
         return _error_response(e)
 
@@ -545,7 +545,7 @@ async def gmail_read(
             redactions=redactions or None,
             domain_hints=domain_hints or None,
         )
-        return cast(str, append_meta(payload, meta))
+        return append_meta(payload, meta)
     except GmailError as e:
         return _error_response(e)
 
@@ -607,7 +607,7 @@ async def gmail_snippets(
             latency_ms=latency_ms,
             domain_hints=domain_hints or None,
         )
-        return cast(str, append_meta(payload, meta))
+        return append_meta(payload, meta)
     except GmailError as e:
         return _error_response(e)
 
@@ -693,7 +693,7 @@ async def gmail_thread(
             redactions=redactions or None,
             domain_hints=domain_hints or None,
         )
-        return cast(str, append_meta(payload, meta))
+        return append_meta(payload, meta)
     except GmailError as e:
         return _error_response(e)
 
@@ -792,7 +792,7 @@ async def gmail_changes(
             redactions=redactions or None,
             next_cursor=next_cursor,
         )
-        return cast(str, append_meta(payload, meta))
+        return append_meta(payload, meta)
     except GmailError as e:
         return _error_response(e)
 
