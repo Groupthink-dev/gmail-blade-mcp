@@ -31,20 +31,24 @@ Implements the `email-v1` domain contract — interchangeable with
 ```
 src/gmail_blade_mcp/
 ├── __init__.py       — Version
-├── __main__.py       — python -m entry
-├── server.py         — FastMCP server + @mcp.tool decorators (19 tools)
-├── client.py         — GmailClient wrapping google-api-python-client (typed exceptions, lazy singleton)
+├── __main__.py       — python -m entry (delegates to cli)
+├── cli.py            — Console entry: bare/serve → server, `auth` verb → interactive OAuth mint/check
+├── server.py         — FastMCP server + @mcp.tool decorators (21 tools)
+├── client.py         — GmailClient wrapping google-api-python-client (typed exceptions, lazy singleton, batch fetch)
 ├── formatters.py     — Token-efficient output formatters (HTML stripping, quote dedup, body truncation)
 ├── models.py         — Constants (limits, scopes, body modes) + write-gate function
+├── errors.py         — Typed exception hierarchy (GmailError, AuthError, ScopeError, …)
 ├── gemini.py         — Gemini-powered classification + summarisation (google-genai SDK)
-└── auth.py           — Gmail OAuth 2.0 + MCP HTTP bearer auth
+└── auth.py           — Gmail OAuth 2.0 credential resolution (never interactive in server mode) + MCP HTTP bearer auth
 ```
 
 - `server.py` defines MCP tools and delegates to `client.py` and `gemini.py` methods
 - `client.py` wraps Google's Gmail API service with `asyncio.to_thread()` for async
 - All tools return strings (MCP convention) — formatters handle presentation
 - Errors are caught and returned as `Error: ...` strings, not raised
-- Credentials stored in `~/.gmail-blade/` (OAuth tokens + app credentials)
+- Credential precedence: `GMAIL_OAUTH_CLIENT_ID`/`_SECRET`/`_REFRESH_TOKEN` env triple
+  (in-memory, Stallari injection) → `~/.gmail-blade/token.json` (0600) → typed `AuthError`.
+  Interactive consent exists only in the `gmail-blade-mcp auth` CLI verb.
 
 ## Key commands
 
