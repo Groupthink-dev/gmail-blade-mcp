@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- `docs/gcp-oauth-setup.md`: comprehensive Google Cloud Console walkthrough
+  (project → Gmail API → Google Auth Platform → "In production" publishing →
+  desktop OAuth client → mint → deploy), linked from the README, with a
+  troubleshooting table and screenshot slots (`docs/images/`).
+
 ## [0.9.0] - 2026-07-02
 
 ### Added

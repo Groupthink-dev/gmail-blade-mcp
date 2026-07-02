@@ -32,16 +32,21 @@ uv sync
 
 ### 2. Set up Gmail API credentials
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a project (or select existing)
-3. Enable the Gmail API
-4. Create OAuth 2.0 credentials (Desktop application)
-5. On the OAuth consent screen, set publishing status to **"In production"** —
-   in "Testing" status Google expires refresh tokens after 7 days, which breaks
-   any long-running server. (The "unverified app" warning at consent is a
-   one-time click-through; if you have a Google Workspace org, marking the app
-   **Internal** avoids the warning entirely.)
-6. Download the JSON file and save as `~/.gmail-blade/credentials.json`
+**→ Full walkthrough: [Google Cloud Console setup guide](docs/gcp-oauth-setup.md)** —
+step-by-step through the current console UI, with troubleshooting.
+
+The short version:
+
+1. In the [Google Cloud Console](https://console.cloud.google.com/), create a
+   project and enable the **Gmail API**
+2. Configure the **Google Auth Platform** (consent screen) and create an OAuth
+   client of type **Desktop app**
+3. Set publishing status to **"In production"** — in "Testing" status Google
+   expires refresh tokens after 7 days, which breaks any long-running server.
+   (The "unverified app" warning at consent is a one-time click-through; if you
+   have a Google Workspace org, marking the app **Internal** avoids the warning
+   entirely.)
+4. Download the client JSON and save it as `~/.gmail-blade/credentials.json`
    (or pass `--client-id`/`--client-secret` to the auth verb instead)
 
 ### 3. Authenticate
