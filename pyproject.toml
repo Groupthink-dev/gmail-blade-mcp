@@ -1,6 +1,6 @@
 [project]
 name = "gmail-blade-mcp"
-version = "0.8.0"
+version = "0.9.0"
 description = "Gmail MCP Server — search, read, send, threads, labels, drafts, filters"
 readme = "README.md"
 license = {text = "MIT"}
@@ -40,7 +40,7 @@ dev = [
 ]
 
 [project.scripts]
-gmail-blade-mcp = "gmail_blade_mcp.server:main"
+gmail-blade-mcp = "gmail_blade_mcp.cli:main"
 
 [build-system]
 requires = ["hatchling"]

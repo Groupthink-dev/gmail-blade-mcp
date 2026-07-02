@@ -385,6 +385,23 @@ def _get_client() -> GmailClient:
     return _client
 
 
+_client_lock = asyncio.Lock()
+
+
+async def _aget_client() -> GmailClient:
+    """Resolve the GmailClient off the event loop.
+
+    Construction performs an OAuth token refresh plus a getProfile call —
+    network I/O that must not block the loop. The lock serialises first-call
+    construction under concurrent tool calls; `_get_client` stays sync as the
+    test patch seam.
+    """
+    if _client is not None:
+        return _client
+    async with _client_lock:
+        return await asyncio.to_thread(_get_client)
+
+
 def _error_response(e: GmailError) -> str:
     """Format a client error as a user-friendly string."""
     return f"Error: {e}"
@@ -440,8 +457,9 @@ async def gmail_search(
         if limit != DEFAULT_LIMIT:
             filters_applied.append(f"limit={limit}")
         label_ids = [label] if label else None
+        client = await _aget_client()
         messages, total = await _run(
-            _get_client().search_messages,
+            client.search_messages,
             query=effective_query,
             label_ids=label_ids,
             limit=limit,
@@ -512,7 +530,7 @@ async def gmail_read(
         # Validate scope early to surface InvalidRequestError before any API call
         if scope is not None and scope not in _VALID_SCOPES:
             raise InvalidRequestError(f"Unknown scope {scope!r}. Valid: work, personal, family, public, None.")
-        client = _get_client()
+        client = await _aget_client()
         message = await _run(client.get_message, message_id)
         filters_applied: list[str] = []
         redactions: list[str] = []
@@ -583,8 +601,9 @@ async def gmail_snippets(
         if limit != DEFAULT_LIMIT:
             filters_applied.append(f"limit={limit}")
         label_ids = [label] if label else None
+        client = await _aget_client()
         messages, total = await _run(
-            _get_client().search_messages,
+            client.search_messages,
             query=effective_query,
             label_ids=label_ids,
             limit=limit,
@@ -658,7 +677,7 @@ async def gmail_thread(
     try:
         if scope is not None and scope not in _VALID_SCOPES:
             raise InvalidRequestError(f"Unknown scope {scope!r}. Valid: work, personal, family, public, None.")
-        client = _get_client()
+        client = await _aget_client()
         thread = await _run(client.get_thread, thread_id)
         filters_applied: list[str] = []
         redactions: list[str] = []
@@ -705,7 +724,8 @@ async def gmail_mailboxes() -> str:
     Returns: name (total/unread) [type] id=LABEL_ID
     """
     try:
-        labels = await _run(_get_client().list_labels)
+        client = await _aget_client()
+        labels = await _run(client.list_labels)
         return format_label_list(labels)
     except GmailError as e:
         return _error_response(e)
@@ -720,7 +740,8 @@ async def gmail_mailboxes() -> str:
 async def gmail_info() -> str:
     """Account info: email address, message count, thread count, current history ID."""
     try:
-        profile = await _run(_get_client().get_profile)
+        client = await _aget_client()
+        profile = await _run(client.get_profile)
         return format_profile(profile)
     except GmailError as e:
         return _error_response(e)
@@ -734,7 +755,8 @@ async def gmail_state() -> str:
     what changed since this point.
     """
     try:
-        profile = await _run(_get_client().get_profile)
+        client = await _aget_client()
+        profile = await _run(client.get_profile)
         return f"History ID: {profile.get('historyId', '?')}\nUse this with gmail_changes to track incremental updates."
     except GmailError as e:
         return _error_response(e)
@@ -753,7 +775,8 @@ async def gmail_changes(
     try:
         label_id = label if label else None
         t0 = time.perf_counter()
-        history = await _run(_get_client().get_history, history_id, label_id=label_id)
+        client = await _aget_client()
+        history = await _run(client.get_history, history_id, label_id=label_id)
         latency_ms = int((time.perf_counter() - t0) * 1000)
         payload = format_changes(history)
 
@@ -801,7 +824,8 @@ async def gmail_changes(
 async def gmail_identities() -> str:
     """List send-as aliases (email identities) configured on this account."""
     try:
-        identities = await _run(_get_client().list_send_as)
+        client = await _aget_client()
+        identities = await _run(client.list_send_as)
         # DD-338 Phase B.1.b — stable sort: sendAsEmail asc (case-folded).
         identities = sorted(
             identities,
@@ -816,7 +840,8 @@ async def gmail_identities() -> str:
 async def gmail_filters() -> str:
     """List all Gmail filters with criteria and actions."""
     try:
-        filters = await _run(_get_client().list_filters)
+        client = await _aget_client()
+        filters = await _run(client.list_filters)
         # DD-338 Phase B.1.b — stable sort: id asc.
         filters = sorted(filters, key=lambda f: f.get("id", "") or "")
         return format_filter_list(filters)
@@ -841,7 +866,8 @@ async def gmail_send(
     if err := require_write():
         return err
     try:
-        result = await _run(_get_client().send_message, to, subject, body, cc=cc, bcc=bcc)
+        client = await _aget_client()
+        result = await _run(client.send_message, to, subject, body, cc=cc, bcc=bcc)
         return f"Sent. Message ID: {result.get('id', '?')}, Thread: {result.get('threadId', '?')}"
     except GmailError as e:
         return _error_response(e)
@@ -857,7 +883,8 @@ async def gmail_reply(
     if err := require_write():
         return err
     try:
-        result = await _run(_get_client().reply_to_message, message_id, body, reply_all=reply_all)
+        client = await _aget_client()
+        result = await _run(client.reply_to_message, message_id, body, reply_all=reply_all)
         return f"Reply sent. Message ID: {result.get('id', '?')}, Thread: {result.get('threadId', '?')}"
     except GmailError as e:
         return _error_response(e)
@@ -875,7 +902,8 @@ async def gmail_draft(
     if err := require_write():
         return err
     try:
-        result = await _run(_get_client().create_draft, to, subject, body, cc=cc, bcc=bcc)
+        client = await _aget_client()
+        result = await _run(client.create_draft, to, subject, body, cc=cc, bcc=bcc)
         draft_id = result.get("id", "?")
         msg_id = result.get("message", {}).get("id", "?")
         return f"Draft created. Draft ID: {draft_id}, Message ID: {msg_id}"
@@ -897,7 +925,8 @@ async def gmail_flag(
         remove = [lbl.strip() for lbl in remove_labels.split(",") if lbl.strip()] if remove_labels else None
         if not add and not remove:
             return "Error: Provide at least one of add_labels or remove_labels."
-        await _run(_get_client().modify_message, message_id, add_labels=add, remove_labels=remove)
+        client = await _aget_client()
+        await _run(client.modify_message, message_id, add_labels=add, remove_labels=remove)
         parts = []
         if add:
             parts.append(f"+{','.join(add)}")
@@ -918,8 +947,9 @@ async def gmail_move(
     if err := require_write():
         return err
     try:
+        client = await _aget_client()
         await _run(
-            _get_client().modify_message,
+            client.modify_message,
             message_id,
             add_labels=[to_label],
             remove_labels=[from_label] if from_label else None,
@@ -981,7 +1011,8 @@ async def gmail_bulk(
             return f"Error: Unknown action '{action}'. Use: archive, read, unread, star, unstar, trash, label."
 
     try:
-        result = await _run(_get_client().batch_modify, ids, add_labels=add, remove_labels=remove)
+        client = await _aget_client()
+        result = await _run(client.batch_modify, ids, add_labels=add, remove_labels=remove)
         return str(result)
     except GmailError as e:
         return _error_response(e)
@@ -1004,7 +1035,8 @@ async def gmail_delete(
     if not confirm:
         return "Error: Permanent deletion requires confirm=true. Use gmail_move to TRASH for soft delete."
     try:
-        await _run(_get_client().delete_message, message_id)
+        client = await _aget_client()
+        await _run(client.delete_message, message_id)
         return f"Permanently deleted message {message_id}."
     except GmailError as e:
         return _error_response(e)
@@ -1049,7 +1081,8 @@ async def gmail_filter_create(
         return "Error: At least one action (add_labels, remove_labels, forward_to) is required."
 
     try:
-        result = await _run(_get_client().create_filter, criteria, action)
+        client = await _aget_client()
+        result = await _run(client.create_filter, criteria, action)
         return f"Filter created. ID: {result.get('id', '?')}"
     except GmailError as e:
         return _error_response(e)
@@ -1066,7 +1099,8 @@ async def gmail_filter_delete(
     if not confirm:
         return "Error: Filter deletion requires confirm=true."
     try:
-        await _run(_get_client().delete_filter, filter_id)
+        client = await _aget_client()
+        await _run(client.delete_filter, filter_id)
         return f"Filter {filter_id} deleted."
     except GmailError as e:
         return _error_response(e)
@@ -1093,7 +1127,8 @@ async def gmail_classify(
     if err := require_gemini():
         return err
     try:
-        message = await _run(_get_client().get_message, message_id)
+        client = await _aget_client()
+        message = await _run(client.get_message, message_id)
         email_text = format_message_body(message, body_mode=body_mode, max_body_chars=2000)
         result = await _run(get_gemini_client().classify, email_text)
 
@@ -1132,10 +1167,12 @@ async def gmail_summarise(
 
     try:
         if message_id:
-            message = await _run(_get_client().get_message, message_id)
+            client = await _aget_client()
+            message = await _run(client.get_message, message_id)
             email_text = format_message_body(message, body_mode="stripped", max_body_chars=4000)
         else:
-            thread = await _run(_get_client().get_thread, thread_id)
+            client = await _aget_client()
+            thread = await _run(client.get_thread, thread_id)
             email_text = format_thread(thread, thread_mode="deduped", max_body_chars=2000)
 
         summary: str = await _run(get_gemini_client().summarise, email_text)

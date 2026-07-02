@@ -36,16 +36,47 @@ uv sync
 2. Create a project (or select existing)
 3. Enable the Gmail API
 4. Create OAuth 2.0 credentials (Desktop application)
-5. Download the JSON file
-6. Save as `~/.gmail-blade/credentials.json`
+5. On the OAuth consent screen, set publishing status to **"In production"** —
+   in "Testing" status Google expires refresh tokens after 7 days, which breaks
+   any long-running server. (The "unverified app" warning at consent is a
+   one-time click-through; if you have a Google Workspace org, marking the app
+   **Internal** avoids the warning entirely.)
+6. Download the JSON file and save as `~/.gmail-blade/credentials.json`
+   (or pass `--client-id`/`--client-secret` to the auth verb instead)
 
-### 3. First run (authenticate)
+### 3. Authenticate
 
 ```bash
-uv run gmail-blade-mcp
+uv run gmail-blade-mcp auth            # mints modify+send scopes (default)
+uv run gmail-blade-mcp auth --scopes read   # read-only grant
 ```
 
-A browser window opens for OAuth consent. After authorising, the refresh token is saved to `~/.gmail-blade/token.json`.
+A browser window opens for OAuth consent. After authorising, the verb prints a
+paste-ready credential block:
+
+```
+GMAIL_OAUTH_CLIENT_ID=...
+GMAIL_OAUTH_CLIENT_SECRET=...
+GMAIL_OAUTH_REFRESH_TOKEN=...
+```
+
+and (unless `--no-save-token`) also saves the refresh token to
+`~/.gmail-blade/token.json` (mode 0600) for standalone use.
+
+**The server itself never opens a browser.** If no credentials are available it
+returns a typed error telling you to run `gmail-blade-mcp auth`. Verify current
+credentials any time with:
+
+```bash
+uv run gmail-blade-mcp auth --check    # prints account email + granted scopes
+```
+
+**Stallari / headless deployments:** set the three `GMAIL_OAUTH_*` env vars
+(e.g. paste them into Stallari → Connections → gmail-blade-mcp). When
+`GMAIL_OAUTH_REFRESH_TOKEN` is set the server builds credentials in memory and
+never touches `~/.gmail-blade/`. Note the scope grant is fixed when the token
+is minted — to enable write tools later you need both `GMAIL_WRITE_ENABLED=true`
+*and* a token minted with `--scopes write`.
 
 ### 4. Configure MCP client
 
@@ -69,6 +100,9 @@ A browser window opens for OAuth consent. After authorising, the refresh token i
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `GMAIL_OAUTH_CLIENT_ID` | _(none)_ | OAuth client ID (in-memory credential mode) |
+| `GMAIL_OAUTH_CLIENT_SECRET` | _(none)_ | OAuth client secret |
+| `GMAIL_OAUTH_REFRESH_TOKEN` | _(none)_ | OAuth refresh token — presence switches on in-memory credential mode (mint with `gmail-blade-mcp auth`) |
 | `GMAIL_WRITE_ENABLED` | `false` | Enable write operations (send, reply, delete, etc.) |
 | `GMAIL_MCP_TRANSPORT` | `stdio` | Transport: `stdio` or `http` |
 | `GMAIL_MCP_HOST` | `127.0.0.1` | HTTP host (when transport=http) |
@@ -81,6 +115,8 @@ A browser window opens for OAuth consent. After authorising, the refresh token i
 - **Write operations disabled by default** — set `GMAIL_WRITE_ENABLED=true` to enable
 - **Permanent delete requires `confirm=true`** — use `gmail_move` to TRASH for soft delete
 - **OAuth tokens never appear in error messages** — regex scrubbing on all error paths
+- **The server can never open a browser** — interactive consent exists only in the `auth` CLI verb; headless deployments get typed errors, not hangs
+- **`token.json` written 0600** — and in env-credential mode nothing is written to disk at all
 - **Bearer auth uses constant-time comparison** — `secrets.compare_digest()`
 - **Credentials stored locally** — `~/.gmail-blade/`, never transmitted
 

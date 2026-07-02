@@ -20,6 +20,17 @@ from email.mime.text import MIMEText
 from typing import Any
 
 from gmail_blade_mcp.auth import get_gmail_service
+from gmail_blade_mcp.errors import (
+    AuthError,
+    ConnectionError,  # noqa: A004
+    GmailError,
+    InvalidRequestError,
+    NotFoundError,
+    QuotaError,
+    RateLimitError,
+    ScopeError,
+    WriteDisabledError,
+)
 from gmail_blade_mcp.models import (
     DEFAULT_LIMIT,
     FORMAT_FULL,
@@ -33,44 +44,24 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Exceptions
+# Exceptions — canonical definitions live in errors.py; re-exported above so
+# `from gmail_blade_mcp.client import AuthError` keeps working.
 # ---------------------------------------------------------------------------
 
-
-class GmailError(Exception):
-    """Base exception for Gmail client errors."""
-
-    def __init__(self, message: str, details: str = "") -> None:
-        super().__init__(message)
-        self.details = details
-
-
-class AuthError(GmailError):
-    """Authentication failed — invalid or expired OAuth token."""
-
-
-class NotFoundError(GmailError):
-    """Requested resource (message, thread, label) not found."""
-
-
-class RateLimitError(GmailError):
-    """Rate limit exceeded — back off and retry."""
-
-
-class QuotaError(GmailError):
-    """Daily quota exceeded."""
-
-
-class ConnectionError(GmailError):  # noqa: A001
-    """Cannot connect to Gmail API."""
-
-
-class WriteDisabledError(GmailError):
-    """Write operation attempted but GMAIL_WRITE_ENABLED is not true."""
-
-
-class InvalidRequestError(GmailError):
-    """Bad request — invalid query, missing fields, etc."""
+__all__ = [
+    "AuthError",
+    "ConnectionError",
+    "GmailClient",
+    "GmailError",
+    "InvalidRequestError",
+    "NotFoundError",
+    "QuotaError",
+    "RateLimitError",
+    "ScopeError",
+    "WriteDisabledError",
+    "strip_html",
+    "strip_quoted_reply",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +69,12 @@ class InvalidRequestError(GmailError):
 # ---------------------------------------------------------------------------
 
 _ERROR_PATTERNS: list[tuple[str, type[GmailError]]] = [
+    # Scope mismatches must precede the broader auth/"invalid" patterns.
+    # 403 insufficientPermissions is the backstop for partial grants —
+    # google-auth only warns when Google returns fewer scopes than requested.
+    ("invalid_scope", ScopeError),
+    ("insufficientpermissions", ScopeError),
+    ("insufficient permission", ScopeError),
     ("unauthorized", AuthError),
     ("invalid credentials", AuthError),
     ("token has been expired", AuthError),

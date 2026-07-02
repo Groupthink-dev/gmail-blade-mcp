@@ -269,11 +269,7 @@ class TestLoadBladeConfig:
         cfg_dir = tmp_path / "blade-config" / "gmail-blade-mcp"
         cfg_dir.mkdir(parents=True)
         (cfg_dir / "config.yaml").write_text(
-            "patterns:\n"
-            "  - field: from\n"
-            "    op: contains\n"
-            '    value: "@family.com"\n'
-            "    domain: family\n"
+            'patterns:\n  - field: from\n    op: contains\n    value: "@family.com"\n    domain: family\n'
         )
         with patch.dict(os.environ, {"STALLARI_STATE_ROOT": str(tmp_path)}):
             patterns = _load_blade_config("gmail-blade-mcp")
@@ -315,9 +311,7 @@ class TestDomainHintsInMetaEnvelope:
             mock_get.return_value = client
             yield client
 
-    async def test_search_emits_domain_hints_when_patterns_match(
-        self, mock_client: Any
-    ) -> None:
+    async def test_search_emits_domain_hints_when_patterns_match(self, mock_client: Any) -> None:
         from gmail_blade_mcp import server
         from gmail_blade_mcp.server import gmail_search
 
@@ -348,9 +342,7 @@ class TestDomainHintsInMetaEnvelope:
         meta = _parse_meta(result)
         assert "domain_hints" not in meta
 
-    async def test_search_omits_domain_hints_when_no_patterns(
-        self, mock_client: Any
-    ) -> None:
+    async def test_search_omits_domain_hints_when_no_patterns(self, mock_client: Any) -> None:
         from gmail_blade_mcp import server
         from gmail_blade_mcp.server import gmail_search
 

@@ -1,5 +1,43 @@
 # Changelog
 
+## [0.9.0] - 2026-07-02
+
+### Added
+
+- **Env-credential mode for Stallari / headless deployments** (#5): when
+  `GMAIL_OAUTH_CLIENT_ID` + `GMAIL_OAUTH_CLIENT_SECRET` + `GMAIL_OAUTH_REFRESH_TOKEN`
+  are set, credentials are built in memory (refresh-token grant) and nothing is
+  ever written to disk. Precedence: env triple → `~/.gmail-blade/token.json` →
+  typed `AuthError` with remediation. A partial triple is a hard error naming
+  the missing vars.
+- **`gmail-blade-mcp auth` CLI verb**: interactive OAuth consent (the only code
+  path that may open a browser). `--scopes {read,write}` (default write),
+  `--client-id`/`--client-secret`, `--no-save-token`, and `--check` (prints
+  account email + granted scopes without prompting). Mint prints the
+  paste-ready `GMAIL_OAUTH_*` triple for Stallari's Connections UI.
+- `ScopeError` (subclass of `AuthError`): raised when the refresh-token grant
+  lacks requested scopes (`invalid_scope` on refresh) or the API returns 403
+  `insufficientPermissions` — message points at `auth --scopes write`.
+- New `errors.py` module — exception hierarchy moved out of `client.py`
+  (re-exported there, so `from gmail_blade_mcp.client import AuthError` still
+  works).
+
+### Changed
+
+- **BREAKING: the server never opens a browser.** First-run consent moved to
+  the `auth` verb; server mode raises a typed `AuthError` telling you to run it
+  (or set the env triple). Previously a missing/expired token in a headless
+  deployment would hang on `InstalledAppFlow.run_local_server`.
+- `token.json` is written with 0600 perms (dir 0700), set at create time;
+  pre-existing files are chmodded on load.
+- Console script entry moved `server:main` → `cli:main`; bare
+  `gmail-blade-mcp` (and `gmail-blade-mcp serve`) behaviour unchanged.
+- Missing `credentials.json` now raises `AuthError` instead of
+  `FileNotFoundError`.
+- `GmailClient` construction (OAuth refresh + profile fetch) now runs off the
+  event loop via an async `_aget_client()` accessor — first tool call no longer
+  blocks the loop.
+
 ## [0.8.0] - 2026-05-24
 
 ### Changed

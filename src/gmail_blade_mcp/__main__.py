@@ -1,5 +1,5 @@
 """Allow running via ``python -m gmail_blade_mcp``."""
 
-from gmail_blade_mcp.server import main
+from gmail_blade_mcp.cli import main
 
 main()
