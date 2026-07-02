@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from typing import Any
+from unittest.mock import MagicMock, patch
+
 from gmail_blade_mcp.client import (
     AuthError,
     ConnectionError,
+    GmailClient,
     GmailError,
     InvalidRequestError,
     NotFoundError,
@@ -90,6 +94,80 @@ class TestStatusCodeClassification:
 
     def test_none_falls_back_to_substrings(self) -> None:
         assert isinstance(_classify_error("rate limit exceeded", None), RateLimitError)
+
+
+class _FakeBatch:
+    """Stands in for BatchHttpRequest: replays canned (response, exception) pairs."""
+
+    def __init__(self, callback: Any, responses: dict[str, tuple[Any, Any]]) -> None:
+        self._callback = callback
+        self._responses = responses
+        self.request_ids: list[str] = []
+
+    def add(self, request: Any, request_id: str) -> None:
+        self.request_ids.append(request_id)
+
+    def execute(self) -> None:
+        for rid in self.request_ids:
+            response, exception = self._responses.get(rid, (None, None))
+            self._callback(rid, response, exception)
+
+
+class TestBatchGetMessages:
+    def _make_client(self, responses: dict[str, tuple[Any, Any]]) -> tuple[GmailClient, list[_FakeBatch]]:
+        service = MagicMock()
+        service.users().getProfile(userId="me").execute.return_value = {"emailAddress": "p@example.com"}
+        batches: list[_FakeBatch] = []
+
+        def _new_batch(callback: Any) -> _FakeBatch:
+            batch = _FakeBatch(callback, responses)
+            batches.append(batch)
+            return batch
+
+        service.new_batch_http_request.side_effect = _new_batch
+        with patch("gmail_blade_mcp.client.get_gmail_service", return_value=service):
+            client = GmailClient()
+        return client, batches
+
+    def test_returns_messages_in_requested_order(self) -> None:
+        responses = {
+            "m1": ({"id": "m1"}, None),
+            "m2": ({"id": "m2"}, None),
+            "m3": ({"id": "m3"}, None),
+        }
+        client, _ = self._make_client(responses)
+        result = client._batch_get_messages(["m3", "m1", "m2"], "metadata")
+        assert [m["id"] for m in result] == ["m3", "m1", "m2"]
+
+    def test_per_item_failure_is_skipped_not_fatal(self) -> None:
+        responses = {
+            "m1": ({"id": "m1"}, None),
+            "m2": (None, RuntimeError("boom")),
+            "m3": ({"id": "m3"}, None),
+        }
+        client, _ = self._make_client(responses)
+        result = client._batch_get_messages(["m1", "m2", "m3"], "full")
+        assert [m["id"] for m in result] == ["m1", "m3"]
+
+    def test_chunks_at_max_batch_size(self) -> None:
+        ids = [f"m{i}" for i in range(120)]
+        responses = {mid: ({"id": mid}, None) for mid in ids}
+        client, batches = self._make_client(responses)
+        result = client._batch_get_messages(ids, "metadata")
+        assert len(result) == 120
+        assert [len(b.request_ids) for b in batches] == [50, 50, 20]
+
+    def test_search_messages_uses_batch(self) -> None:
+        responses = {"m1": ({"id": "m1"}, None)}
+        client, batches = self._make_client(responses)
+        client._service.users().messages().list().execute.return_value = {
+            "messages": [{"id": "m1"}],
+            "resultSizeEstimate": 1,
+        }
+        messages, total = client.search_messages(query="test", limit=5)
+        assert [m["id"] for m in messages] == ["m1"]
+        assert total == 1
+        assert len(batches) == 1
 
 
 class TestCredentialScrubbing:

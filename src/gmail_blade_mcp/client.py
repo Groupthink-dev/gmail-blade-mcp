@@ -295,15 +295,39 @@ class GmailClient:
         if not messages_refs:
             return [], 0
 
-        # Fetch message details
+        # Fetch message details in batched round trips
         fmt = FORMAT_FULL if include_details else FORMAT_METADATA
-        messages = []
-        for ref in messages_refs[:limit]:
-            msg = self.get_message(ref["id"], fmt=fmt)
-            if msg:
-                messages.append(msg)
+        message_ids = [ref["id"] for ref in messages_refs[:limit]]
+        return self._batch_get_messages(message_ids, fmt), total
 
-        return messages, total
+    def _batch_get_messages(self, message_ids: list[str], fmt: str) -> list[dict[str, Any]]:
+        """Fetch message details via the batch endpoint, ≤MAX_BATCH_SIZE per round trip.
+
+        Per-item failures are logged and skipped — one bad message must not sink
+        the whole page. Results are returned in the requested-ID order.
+        """
+        found: dict[str, dict[str, Any]] = {}
+
+        def _collect(request_id: str, response: dict[str, Any] | None, exception: Exception | None) -> None:
+            if exception is not None:
+                logger.warning("Batch fetch failed for message %s: %s", request_id, _scrub_credentials(str(exception)))
+                return
+            if response:
+                found[request_id] = response
+
+        for start in range(0, len(message_ids), MAX_BATCH_SIZE):
+            chunk = message_ids[start : start + MAX_BATCH_SIZE]
+            batch = self._service.new_batch_http_request(callback=_collect)
+            for message_id in chunk:
+                kwargs: dict[str, Any] = {"userId": self._user, "id": message_id, "format": fmt}
+                if fmt == FORMAT_METADATA:
+                    kwargs["metadataHeaders"] = METADATA_HEADERS
+                batch.add(self._service.users().messages().get(**kwargs), request_id=message_id)
+            # `found` is keyed by request_id, so a rate-limit retry of the whole
+            # batch inside _execute cannot produce duplicates.
+            self._execute(batch)
+
+        return [found[mid] for mid in message_ids if mid in found]
 
     def get_message(self, message_id: str, fmt: str = FORMAT_FULL) -> dict[str, Any]:
         """Get a single message by ID.
