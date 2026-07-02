@@ -10,6 +10,7 @@ from gmail_blade_mcp.client import (
     NotFoundError,
     QuotaError,
     RateLimitError,
+    ScopeError,
     _classify_error,
     _scrub_credentials,
 )
@@ -46,6 +47,49 @@ class TestErrorClassification:
         err = _classify_error("Something completely unknown happened")
         assert isinstance(err, GmailError)
         assert not isinstance(err, AuthError)
+
+    def test_scope_errors_by_substring(self) -> None:
+        # Must win over the broader "forbidden"/"invalid" patterns
+        assert isinstance(_classify_error("invalid_scope: Bad Request"), ScopeError)
+        assert isinstance(_classify_error("Request had insufficientPermissions"), ScopeError)
+        assert isinstance(_classify_error("Insufficient Permission: forbidden"), ScopeError)
+
+
+class TestStatusCodeClassification:
+    """HTTP status wins over message wording when the code is known."""
+
+    def test_401_is_auth(self) -> None:
+        assert isinstance(_classify_error("weird new wording", 401), AuthError)
+
+    def test_403_insufficient_is_scope(self) -> None:
+        err = _classify_error("Insufficient Permission", 403)
+        assert isinstance(err, ScopeError)
+
+    def test_403_rate_is_rate_limit(self) -> None:
+        assert isinstance(_classify_error("User Rate Limit Exceeded", 403), RateLimitError)
+
+    def test_403_quota_is_quota(self) -> None:
+        assert isinstance(_classify_error("Quota exceeded for quota metric", 403), QuotaError)
+
+    def test_403_default_is_auth(self) -> None:
+        assert isinstance(_classify_error("Forbidden", 403), AuthError)
+
+    def test_404_is_not_found(self) -> None:
+        assert isinstance(_classify_error("weird new wording", 404), NotFoundError)
+
+    def test_429_is_rate_limit(self) -> None:
+        assert isinstance(_classify_error("weird new wording", 429), RateLimitError)
+
+    def test_400_is_invalid_request(self) -> None:
+        # Wording says "not found" but 400 wins
+        assert isinstance(_classify_error("resource not found in query", 400), InvalidRequestError)
+
+    def test_5xx_is_connection(self) -> None:
+        assert isinstance(_classify_error("Backend Error", 500), ConnectionError)
+        assert isinstance(_classify_error("Service Unavailable", 503), ConnectionError)
+
+    def test_none_falls_back_to_substrings(self) -> None:
+        assert isinstance(_classify_error("rate limit exceeded", None), RateLimitError)
 
 
 class TestCredentialScrubbing:

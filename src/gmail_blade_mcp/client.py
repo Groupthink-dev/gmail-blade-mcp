@@ -99,13 +99,42 @@ _ERROR_PATTERNS: list[tuple[str, type[GmailError]]] = [
 _TOKEN_PATTERN = re.compile(r"(ya29\.[A-Za-z0-9_-]+|Bearer\s+[A-Za-z0-9_.-]+)", re.IGNORECASE)
 
 
-def _classify_error(message: str) -> GmailError:
-    """Map error message to a typed exception."""
+def _classify_error(message: str, status_code: int | None = None) -> GmailError:
+    """Map an API error to a typed exception.
+
+    HTTP status wins when known (message wording changes; status codes don't).
+    403 is ambiguous on Gmail — scope problems and rate limits both use it —
+    so it is disambiguated by reason substring before defaulting to AuthError.
+    The substring table remains the fallback for non-HTTP exceptions.
+    """
     lower = message.lower()
+    scrubbed = _scrub_credentials(message)
+
+    if status_code is not None:
+        match status_code:
+            case 401:
+                return AuthError(scrubbed)
+            case 403:
+                if "insufficient" in lower or "invalid_scope" in lower:
+                    return ScopeError(scrubbed)
+                if "rate" in lower:
+                    return RateLimitError(scrubbed)
+                if "quota" in lower or "daily limit" in lower:
+                    return QuotaError(scrubbed)
+                return AuthError(scrubbed)
+            case 404:
+                return NotFoundError(scrubbed)
+            case 429:
+                return RateLimitError(scrubbed)
+            case 400:
+                return InvalidRequestError(scrubbed)
+            case code if code >= 500:
+                return ConnectionError(scrubbed)
+
     for pattern, exc_cls in _ERROR_PATTERNS:
         if pattern in lower:
-            return exc_cls(_scrub_credentials(message))
-    return GmailError(_scrub_credentials(message))
+            return exc_cls(scrubbed)
+    return GmailError(scrubbed)
 
 
 def _scrub_credentials(message: str) -> str:
@@ -554,7 +583,8 @@ class GmailClient:
                 return request.execute()
             except Exception as e:
                 error_msg = str(e)
-                classified = _classify_error(error_msg)
+                status_code = getattr(e, "status_code", None)
+                classified = _classify_error(error_msg, int(status_code) if status_code is not None else None)
 
                 if isinstance(classified, RateLimitError) and attempt < max_retries - 1:
                     wait = 2 ** (attempt + 1)
