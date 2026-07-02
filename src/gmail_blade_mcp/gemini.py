@@ -4,8 +4,9 @@ Uses the Google GenAI SDK (``google-genai``) for email classification and
 summarisation. Gated behind ``GOOGLE_API_KEY`` — tools degrade gracefully
 when the key is absent.
 
-Model default: ``gemini-2.0-flash-lite`` (fast, cheap, sufficient for
-single-email classification/summarisation).
+Model default: ``gemini-3.1-flash-lite`` (fast, cheap, sufficient for
+single-email classification/summarisation). Override with
+``GMAIL_GEMINI_MODEL``.
 """
 
 # mypy: disable-error-code="no-any-return"
@@ -18,7 +19,13 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-2.0-flash-lite"
+DEFAULT_MODEL = "gemini-3.1-flash-lite"
+
+
+def _resolve_model() -> str:
+    """Model name from GMAIL_GEMINI_MODEL env, falling back to the default."""
+    return os.environ.get("GMAIL_GEMINI_MODEL", "").strip() or DEFAULT_MODEL
+
 
 # Concise system prompts — minimise input tokens
 _CLASSIFY_SYSTEM = (
@@ -61,7 +68,7 @@ def require_gemini() -> str | None:
 class GeminiClient:
     """Thin wrapper around the Google GenAI SDK for email intelligence."""
 
-    def __init__(self, model: str = DEFAULT_MODEL) -> None:
+    def __init__(self, model: str | None = None) -> None:
         from google import genai
 
         api_key = _get_api_key()
@@ -69,7 +76,7 @@ class GeminiClient:
             raise RuntimeError("GOOGLE_API_KEY not set")
 
         self._client = genai.Client(api_key=api_key)
-        self._model = model
+        self._model = model or _resolve_model()
 
     def classify(self, email_text: str) -> dict[str, Any]:
         """Classify an email. Returns dict with category, priority, action, summary."""
@@ -82,11 +89,12 @@ class GeminiClient:
                 "system_instruction": _CLASSIFY_SYSTEM,
                 "temperature": 0.1,
                 "max_output_tokens": 200,
+                "response_mime_type": "application/json",
             },
         )
 
         text = (response.text or "").strip()
-        # Strip markdown fences if model includes them despite instructions
+        # Defensive: strip markdown fences if a model ignores response_mime_type
         if text.startswith("```"):
             text = text.split("\n", 1)[1] if "\n" in text else text[3:]
             if text.endswith("```"):
@@ -117,9 +125,9 @@ class GeminiClient:
 _gemini_client: GeminiClient | None = None
 
 
-def get_gemini_client(model: str = DEFAULT_MODEL) -> GeminiClient:
-    """Get or create the GeminiClient singleton."""
+def get_gemini_client() -> GeminiClient:
+    """Get or create the GeminiClient singleton (model via GMAIL_GEMINI_MODEL)."""
     global _gemini_client  # noqa: PLW0603
     if _gemini_client is None:
-        _gemini_client = GeminiClient(model=model)
+        _gemini_client = GeminiClient()
     return _gemini_client

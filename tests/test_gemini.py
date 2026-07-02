@@ -108,6 +108,32 @@ class TestClassify:
         assert "error" in result
         assert "raw" in result
 
+    def test_classify_requests_json_mime(self) -> None:
+        mock_response = MagicMock()
+        mock_response.text = "{}"
+        mock_sdk = MagicMock()
+        mock_sdk.models.generate_content.return_value = mock_response
+        client = self._make_client(mock_sdk)
+
+        client.classify("Some email")
+        config = mock_sdk.models.generate_content.call_args.kwargs["config"]
+        assert config["response_mime_type"] == "application/json"
+
+    def test_model_default_and_env_override(self) -> None:
+        from gmail_blade_mcp.gemini import DEFAULT_MODEL
+
+        assert DEFAULT_MODEL == "gemini-3.1-flash-lite"
+
+        mock_sdk = MagicMock()
+        client = self._make_client(mock_sdk)
+        assert client._model == DEFAULT_MODEL
+
+        with patch.dict("os.environ", {"GOOGLE_API_KEY": "test-key", "GMAIL_GEMINI_MODEL": "gemini-custom"}):
+            with patch("google.genai.Client", return_value=mock_sdk):
+                from gmail_blade_mcp.gemini import GeminiClient
+
+                assert GeminiClient()._model == "gemini-custom"
+
 
 # ---------------------------------------------------------------------------
 # Summarisation
