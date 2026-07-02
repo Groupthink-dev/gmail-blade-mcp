@@ -1,10 +1,10 @@
 name: gmail-blade-mcp
-version: "0.2.1"
+version: "0.9.0"
 description: "Gmail email operations via Google API — search, read, send, threads, labels, drafts, filters"
 author: piersdd
 license: MIT
 tier: certified
-homepage: https://github.com/piersdd/gmail-blade-mcp
+homepage: https://github.com/Groupthink-dev/gmail-blade-mcp
 contract: email-v1
 
 services:
@@ -29,12 +29,61 @@ install:
   command: gmail-blade-mcp
 
 env:
+  - name: GMAIL_OAUTH_CLIENT_ID
+    description: "Google OAuth 2.0 client ID (Desktop application type)"
+  - name: GMAIL_OAUTH_CLIENT_SECRET
+    description: "Google OAuth 2.0 client secret"
+    secret: true
+  - name: GMAIL_OAUTH_REFRESH_TOKEN
+    description: "Gmail refresh token — mint with `gmail-blade-mcp auth`; presence switches the blade to in-memory credentials (no disk)"
+    secret: true
   - name: GMAIL_WRITE_ENABLED
     description: "Enable write operations (send, reply, flag, move, delete)"
     default: "false"
   - name: GOOGLE_API_KEY
     description: "Google AI Studio API key for Gemini classify/summarise tools"
     secret: true
+
+setup:
+  auth_model: oauth2
+  complexity: involved
+  icon: "envelope.badge"
+  product: "Google Gmail API"
+  blurb: "Connect to Gmail for search, read, send, threads, labels, drafts, and filters. OAuth2 refresh-token credentials — mint once with the bundled `gmail-blade-mcp auth` CLI, then paste the three values here. The blade refreshes access tokens in memory; nothing is written to disk."
+  prerequisites:
+    - "Google Cloud project with the Gmail API enabled"
+    - "OAuth 2.0 client of type 'Desktop application' (download or note its client ID + secret)"
+    - "OAuth consent screen publishing status 'In production' — 'Testing' status expires refresh tokens after 7 days (Google Workspace orgs can use 'Internal' instead)"
+    - "Run `uvx gmail-blade-mcp auth --scopes write` in a terminal to mint the refresh token (opens a browser)"
+  fields:
+    - key: GMAIL_OAUTH_CLIENT_ID
+      label: "OAuth Client ID"
+      secret: false
+      required: true
+      placeholder: "xxxx.apps.googleusercontent.com"
+      help: "From Google Cloud Console → APIs & Services → Credentials → your Desktop app client."
+    - key: GMAIL_OAUTH_CLIENT_SECRET
+      label: "OAuth Client Secret"
+      secret: true
+      required: true
+      placeholder: "GOCSPX-…"
+    - key: GMAIL_OAUTH_REFRESH_TOKEN
+      label: "Refresh Token"
+      secret: true
+      required: true
+      placeholder: "1//…"
+      help: "Printed by `gmail-blade-mcp auth` after browser consent. Mint with --scopes write if you plan to enable write operations — the grant is fixed at mint time."
+  help:
+    - label: "Google Cloud Console — Credentials"
+      url: "https://console.cloud.google.com/apis/credentials"
+    - label: "Enable the Gmail API"
+      url: "https://console.cloud.google.com/apis/library/gmail.googleapis.com"
+  oauth2:
+    grant_type: "authorization_code"
+    scopes:
+      - "https://www.googleapis.com/auth/gmail.readonly"
+      - "https://www.googleapis.com/auth/gmail.modify"
+      - "https://www.googleapis.com/auth/gmail.send"
 
 requires:
   sidereal: ">=0.3.0"
